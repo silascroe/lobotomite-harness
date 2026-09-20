@@ -37,6 +37,15 @@ from agent_harness import (  # noqa: E402
     normalize_reasoning_level,
     reasoning_options,
 )
+from skills import (  # noqa: E402
+    DEFAULT_SKILL_NAMES,
+    SkillError,
+    find_skills,
+    list_skills,
+    public_selection,
+    public_skill,
+    resolve_skill_selection,
+)
 from job_state import (  # noqa: E402
     JobStateError,
     complete_job,
@@ -77,6 +86,7 @@ Response shapes:
 {"action":"apply_patch","args":{"patch":"*** Begin Patch\\n...\\n*** End Patch"}}
 {"action":"run_command","args":{"command":"node --check app.js"}}
 {"action":"git_diff","args":{"max_chars":12000}}
+{"action":"find_skills","args":{"query":"browser testing","source":"local"}}
 {"action":"workflow_checkpoint","args":{"phase":"plan","summary":"short operational status","next_action":"the next concrete step","artifacts":["docs/plan.md"]}}
 
 Workflow guidance:
@@ -223,6 +233,37 @@ def task_catalog() -> list[dict[str, Any]]:
     return tasks
 
 
+def skill_catalog(raw_project_path: Any = None) -> dict[str, Any]:
+    project_path = None
+    if isinstance(raw_project_path, str) and raw_project_path.strip():
+        project_path = normalize_project_path(raw_project_path, ROOT / "agent-lab" / "scratch")
+    return {
+        "defaults": list(DEFAULT_SKILL_NAMES),
+        "skills": [public_skill(item) for item in list_skills(project_path)],
+    }
+
+
+def discover_skills(payload: dict[str, Any]) -> dict[str, Any]:
+    query = payload.get("query")
+    source = str(payload.get("source", "local")).strip().lower()
+    if source == "remote" and payload.get("confirm_remote") is not True:
+        raise ApiError("remote discovery requires explicit confirmation")
+    raw_project_path = payload.get("project_path")
+    project_path = None
+    if isinstance(raw_project_path, str) and raw_project_path.strip():
+        project_path = normalize_project_path(raw_project_path, ROOT / "agent-lab" / "scratch")
+    try:
+        results = find_skills(
+            query,
+            project_path,
+            source=source,
+            allow_remote=source == "remote" and payload.get("confirm_remote") is True,
+        )
+    except SkillError as exc:
+        raise ApiError(str(exc), 400) from exc
+    return {"query": query, "source": source, "results": results}
+
+
 def read_events(run_id: str) -> list[dict[str, Any]]:
     run_dir = resolve_inside(RUNS_DIR, run_id)
     path = run_dir / "events.jsonl"
@@ -273,6 +314,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "project": str(project),
         "workspace_mode": summary.get("workspace_mode") or ("managed" if project == (run_dir / "project").resolve() else "selected"),
         "workflow": workflow,
+        "skills": summary.get("skills", {}),
     }
 
 
@@ -295,6 +337,7 @@ def run_summaries() -> list[dict[str, Any]]:
                 "workspace_mode": state.get("workspace_mode", summary.get("workspace_mode", "")),
                 "changed_files": summary.get("changed_files", []),
                 "workflow": state.get("workflow", {}),
+                "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
                 "updated": directory.stat().st_mtime,
             }
@@ -341,7 +384,15 @@ def project_files_from(project: Path) -> list[dict[str, Any]]:
 
 
 class InteractiveSession:
-    def __init__(self, session_id: str, reasoning_level: str | None = None, project_path: Any = None, *, resume: bool = False) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        reasoning_level: str | None = None,
+        project_path: Any = None,
+        skill_overrides: Any = None,
+        *,
+        resume: bool = False,
+    ) -> None:
         self.session_id = session_id
         self.run_dir = SESSION_DIR / session_id
         persisted = read_json(self.run_dir / "session.json") if resume else {}
@@ -362,8 +413,16 @@ class InteractiveSession:
                 config["reasoning_level"] = normalize_reasoning_level(reasoning_level)
             except ValueError as exc:
                 raise ApiError(str(exc)) from exc
+        if resume and skill_overrides is None and isinstance(persisted, dict):
+            skill_overrides = persisted.get("skill_overrides")
+        if resume and skill_overrides is None:
+            skill_overrides = config.get("skill_overrides")
+        if skill_overrides is not None:
+            config["skill_overrides"] = skill_overrides
         config["required_files"] = []
         config["require_validation"] = False
+        config["require_workflow_gates"] = False
+        config["allow_remote_skill_search"] = False
         config.pop("evaluator", None)
         config["max_turns"] = 12
         persisted_project = project_path
@@ -495,6 +554,8 @@ class InteractiveSession:
                 "project": str(self.project_dir),
                 "workspace_mode": self.harness.workspace_mode,
                 "workflow": self.harness.workflow,
+                "skills": self.harness.skill_metadata(),
+                "skill_overrides": self.harness.config.get("skill_overrides", {}),
                 "job": self.job,
                 "conversation": self.conversation,
             }
@@ -520,6 +581,7 @@ class InteractiveSession:
             "project": str(self.project_dir),
             "workspace_mode": self.harness.workspace_mode,
             "workflow": self.harness.workflow,
+            "skills": self.harness.skill_metadata(),
             "conversation": conversation,
             "events": read_events_from(self.run_dir),
             "files": project_files_from(self.project_dir),
@@ -658,7 +720,7 @@ class InteractiveSession:
                     args = parsed.get("args", {})
                     if not isinstance(args, dict):
                         raise HarnessError("args must be a JSON object")
-                    if action not in {"respond", "list_files", "read_file", "write_file", "apply_patch", "run_command", "git_diff", "workflow_checkpoint", "finish"}:
+                    if action not in {"respond", "list_files", "read_file", "write_file", "apply_patch", "run_command", "git_diff", "find_skills", "workflow_checkpoint", "finish"}:
                         raise HarnessError("unknown interactive action")
                 except (HarnessError, AttributeError) as exc:
                     correction = (
@@ -729,10 +791,15 @@ def restore_sessions() -> list[str]:
     return restored
 
 
-def create_session(reasoning_level: Any = None, project_path: Any = None) -> InteractiveSession:
+def create_session(reasoning_level: Any = None, project_path: Any = None, skill_overrides: Any = None) -> InteractiveSession:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        session = InteractiveSession(choose_session_id(), reasoning_level=reasoning_level, project_path=project_path)
+        session = InteractiveSession(
+            choose_session_id(),
+            reasoning_level=reasoning_level,
+            project_path=project_path,
+            skill_overrides=skill_overrides,
+        )
     except HarnessError as exc:
         raise ApiError(str(exc), 413) from exc
     with SESSION_LOCK:
@@ -769,6 +836,11 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
             raise ApiError(str(exc)) from exc
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     project_path = normalize_project_path(payload.get("project_path"), RUNS_DIR / run_id / "project")
+    skill_overrides = payload.get("skill_overrides")
+    try:
+        skill_selection = resolve_skill_selection(project_path, skill_overrides)
+    except SkillError as exc:
+        raise ApiError(str(exc)) from exc
     command = [
         sys.executable,
         str(HARNESS),
@@ -785,6 +857,8 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         command.append("--no-gates")
     if reasoning_level is not None:
         command.extend(["--reasoning-level", reasoning_level])
+    if skill_overrides is not None:
+        command.extend(["--skill-overrides-json", json.dumps(skill_overrides, ensure_ascii=False)])
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         process = subprocess.Popen(
@@ -804,7 +878,12 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         PROCESSES[run_id] = process
         OUTPUTS[run_id] = []
     threading.Thread(target=capture_process, args=(run_id, process), daemon=True).start()
-    return {"run_id": run_id, "status": "running", "project": str(project_path)}
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "project": str(project_path),
+        "skills": public_selection(skill_selection),
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -849,6 +928,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"status": "ok", "local_only": True})
             if path == "/api/reasoning-levels":
                 return self.send_json({"levels": reasoning_options()})
+            if path == "/api/skills":
+                query = urllib.parse.parse_qs(parsed.query)
+                project_path = query.get("project_path", [None])[0]
+                return self.send_json(skill_catalog(project_path))
             if path == "/api/tasks":
                 return self.send_json({"tasks": task_catalog()})
             if path == "/api/projects":
@@ -913,8 +996,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(start_run(payload), 202)
             if parsed.path == "/api/projects":
                 return self.send_json(create_project(payload.get("name")), 201)
+            if parsed.path == "/api/skills/discover":
+                return self.send_json(discover_skills(payload))
             if parsed.path == "/api/sessions":
-                session = create_session(payload.get("reasoning_level"), payload.get("project_path"))
+                session = create_session(
+                    payload.get("reasoning_level"),
+                    payload.get("project_path"),
+                    payload.get("skill_overrides"),
+                )
                 return self.send_json(session.state(), 201)
             if parsed.path.startswith("/api/sessions/"):
                 remainder = parsed.path[len("/api/sessions/") :]

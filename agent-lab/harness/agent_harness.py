@@ -1276,6 +1276,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--template", type=Path)
     parser.add_argument("--project-dir", type=Path, help="use this existing or newly created directory as the project workspace")
     parser.add_argument("--reasoning-level", choices=tuple(REASONING_LEVELS), help="override the configured reasoning level")
+    parser.add_argument("--skill-overrides-json", help="JSON object containing per-task enabled and disabled skill names")
     parser.add_argument("--no-gates", action="store_true", help="disable task-specific completion requirements and evaluator")
     return parser.parse_args()
 
@@ -1293,6 +1294,13 @@ def main() -> int:
     if args.reasoning_level is not None:
         config = dict(config)
         config["reasoning_level"] = normalize_reasoning_level(args.reasoning_level)
+    if args.skill_overrides_json is not None:
+        try:
+            skill_overrides = json.loads(args.skill_overrides_json)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"invalid skill overrides JSON: {exc}") from exc
+        config = dict(config)
+        config["skill_overrides"] = skill_overrides
     if args.no_gates:
         config = dict(config)
         config["required_files"] = []

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Agent Lab</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260920-studio-8">
-  <link rel="stylesheet" href="styles.css?v=20260920-studio-7">
+  <link rel="stylesheet" href="styles.css?v=20260920-skills-1">
 </head>
 <body>
   <div class="app-shell">
@@ -329,6 +329,32 @@
         <label for="taskText">Task</label>
         <textarea id="taskText" rows="10" spellcheck="true" placeholder="Describe what the agent should build or investigate."></textarea>
 
+        <section class="skill-config" aria-labelledby="skillConfigTitle">
+          <div class="skill-config-heading">
+            <div>
+              <h3 id="skillConfigTitle">Working skills</h3>
+              <p id="skillSummary">Loading the trusted defaults…</p>
+            </div>
+            <button id="resetSkillsButton" class="text-button" type="button">Reset</button>
+          </div>
+          <div id="skillOverride" class="skill-options" aria-label="Skill selection"></div>
+          <div class="skill-config-actions">
+            <button id="findSkillsButton" class="secondary-button" type="button" aria-expanded="false" aria-controls="skillFinder">Find skills</button>
+            <small>Defaults are recorded with this run. Project-local skills are never enabled silently.</small>
+          </div>
+          <div id="skillFinder" class="skill-finder" hidden>
+            <div class="skill-finder-row">
+              <label class="grow" for="skillSearch">
+                <span>Search the catalog</span>
+                <input id="skillSearch" type="search" autocomplete="off" placeholder="e.g. browser testing">
+              </label>
+              <button id="searchSkillsButton" class="secondary-button align-end" type="button">Search local</button>
+              <button id="searchRemoteSkillsButton" class="text-button align-end" type="button">Search skills.sh</button>
+            </div>
+            <div id="skillResults" class="skill-results" aria-live="polite">Search the local catalog or explicitly search skills.sh.</div>
+          </div>
+        </section>
+
         <label class="check-row" for="useGates">
           <input id="useGates" type="checkbox" checked>
           <span>
@@ -350,6 +376,6 @@
     </form>
   </dialog>
 
-  <script src="app.js?v=20260920-studio-7"></script>
+  <script src="app.js?v=20260920-skills-1"></script>
 </body>
 </html>

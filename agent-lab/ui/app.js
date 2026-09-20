@@ -7,6 +7,9 @@ const state = {
   sessionFilter: "",
   reasoningLevel: "standard",
   reasoningOptions: [],
+  skills: [],
+  skillDefaults: [],
+  skillOverrides: { enabled: [], disabled: [] },
   projects: [],
   sessions: [],
   runPollTimer: null,
@@ -44,6 +47,10 @@ function openModal(dialogId, triggerId) {
   if (dialogId === "runDialog") {
     $("launchNote").className = "launch-note";
     $("launchNote").textContent = "Runs use the active project and reasoning level.";
+    state.skillOverrides = { enabled: [], disabled: [] };
+    loadSkills($("workspacePath").value.trim()).catch((error) => {
+      $("skillSummary").textContent = `Skill catalog unavailable: ${error.message}`;
+    });
   }
   if (!dialog.open) dialog.showModal();
   if (dialogId === "workspaceDialog") $("mobileWorkspaceButton").setAttribute("aria-expanded", "true");
@@ -560,6 +567,8 @@ function renderInspector(record = state.activeRecord) {
   const reasoningBudget = effectiveBudget > 0 ? `${formatTokenCount(effectiveBudget)} tokens` : "Disabled";
   const reasoningMax = reasoning.max_tokens || reasoningOption(reasoning.level || state.reasoningLevel).max_tokens;
   const workflow = normalizeWorkflow(record?.workflow);
+  const skills = record?.skills || {};
+  const skillNames = Array.isArray(skills.resolved) ? skills.resolved.map((item) => item.name).filter(Boolean) : [];
   renderReasoningControl(record);
   $("inspectorContent").innerHTML = [
     detailRow(state.activeKind === "run" ? "Run ID" : "Session ID", escapeText(id), "mono-value"),
@@ -568,6 +577,7 @@ function renderInspector(record = state.activeRecord) {
     detailRow("Reasoning", escapeText(reasoningLabel)),
     detailRow("Thinking budget", escapeText(reasoningBudget), "muted-value"),
     detailRow("Response cap", `${formatTokenCount(reasoningMax)} tokens`, "muted-value"),
+    detailRow("Skills", escapeText(skillNames.length ? skillNames.join(" · ") : "None selected"), "muted-value"),
     detailRow("Model calls", escapeText(calls)),
     detailRow("Tool calls", escapeText(tools)),
     detailRow("Workflow", escapeText(workflow.phase)),
@@ -703,6 +713,117 @@ async function loadProjects() {
   updateWorkspaceSummary();
 }
 
+function currentSkillOverrides() {
+  return {
+    enabled: [...new Set(state.skillOverrides.enabled || [])],
+    disabled: [...new Set(state.skillOverrides.disabled || [])],
+  };
+}
+
+function skillSelected(item) {
+  const defaults = state.skillDefaults || [];
+  const overrides = currentSkillOverrides();
+  return overrides.enabled.includes(item.name) || (defaults.includes(item.name) && !overrides.disabled.includes(item.name));
+}
+
+function renderSkillControls() {
+  const container = $("skillOverride");
+  const summary = $("skillSummary");
+  if (!container || !summary) return;
+  if (!state.skills.length) {
+    container.innerHTML = '<div class="muted">No skills are available for this project.</div>';
+    summary.textContent = "No skills available";
+    return;
+  }
+  const selected = state.skills.filter(skillSelected);
+  const overrides = currentSkillOverrides();
+  const overrideCount = overrides.enabled.length + overrides.disabled.length;
+  summary.textContent = `${selected.length} selected · ${overrideCount ? `${overrideCount} task override${overrideCount === 1 ? "" : "s"}` : "trusted defaults"}`;
+  container.innerHTML = state.skills.map((item) => `
+    <label class="skill-option" for="skill-${escapeText(item.name)}">
+      <input id="skill-${escapeText(item.name)}" type="checkbox" data-skill-name="${escapeText(item.name)}" ${skillSelected(item) ? "checked" : ""} ${item.activatable === false ? "disabled" : ""}>
+      <span class="skill-option-copy">
+        <span class="skill-option-name">${escapeText(item.name)}</span>
+        <span class="skill-option-description">${escapeText(item.description)}</span>
+      </span>
+      <span class="skill-source">${escapeText(item.source)}</span>
+    </label>`).join("");
+  container.querySelectorAll("input[data-skill-name]").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      const name = event.target.dataset.skillName;
+      const isDefault = state.skillDefaults.includes(name);
+      if (event.target.checked) {
+        state.skillOverrides.disabled = state.skillOverrides.disabled.filter((value) => value !== name);
+        if (!isDefault && !state.skillOverrides.enabled.includes(name)) state.skillOverrides.enabled.push(name);
+      } else {
+        state.skillOverrides.enabled = state.skillOverrides.enabled.filter((value) => value !== name);
+        if (isDefault && !state.skillOverrides.disabled.includes(name)) state.skillOverrides.disabled.push(name);
+      }
+      renderSkillControls();
+    });
+  });
+}
+
+async function loadSkills(projectPath = "") {
+  const query = projectPath ? `?project_path=${encodeURIComponent(projectPath)}` : "";
+  const data = await api(`/api/skills${query}`);
+  state.skills = data.skills || [];
+  state.skillDefaults = data.defaults || [];
+  const names = new Set(state.skills.map((item) => item.name));
+  state.skillOverrides.enabled = (state.skillOverrides.enabled || []).filter((name) => names.has(name));
+  state.skillOverrides.disabled = (state.skillOverrides.disabled || []).filter((name) => names.has(name));
+  renderSkillControls();
+}
+
+function renderSkillResults(results, source = "local") {
+  const container = $("skillResults");
+  if (!container) return;
+  if (!results.length) {
+    container.textContent = source === "remote" ? "No remote recommendations returned." : "No matching local skills.";
+    return;
+  }
+  container.innerHTML = results.map((item) => {
+    const available = state.skills.some((skill) => skill.name === item.name && item.activatable !== false);
+    return `<div class="skill-result">
+      <div class="skill-result-copy"><div class="skill-result-name">${escapeText(item.name)}</div><div class="skill-result-meta">${escapeText(item.source)} · ${escapeText(item.quality || item.description || "Review before use.")}</div></div>
+      ${available ? `<button class="text-button" type="button" data-use-skill="${escapeText(item.name)}">Use</button>` : ""}
+    </div>`;
+  }).join("");
+  container.querySelectorAll("[data-use-skill]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const name = button.dataset.useSkill;
+      if (!state.skillDefaults.includes(name) && !state.skillOverrides.enabled.includes(name)) state.skillOverrides.enabled.push(name);
+      state.skillOverrides.disabled = state.skillOverrides.disabled.filter((value) => value !== name);
+      renderSkillControls();
+    });
+  });
+}
+
+async function searchSkills(source = "local") {
+  const query = $("skillSearch").value.trim();
+  if (!query) {
+    $("skillResults").textContent = "Enter a capability to search for.";
+    $("skillSearch").focus();
+    return;
+  }
+  $("skillResults").textContent = source === "remote" ? "Searching skills.sh…" : "Searching the local catalog…";
+  try {
+    const result = await api("/api/skills/discover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query,
+        source,
+        project_path: $("workspacePath").value.trim(),
+        ...(source === "remote" ? { confirm_remote: true } : {}),
+      }),
+    });
+    renderSkillResults(result.results || [], source);
+  } catch (error) {
+    $("skillResults").textContent = error.message;
+  }
+}
+
 async function loadSessions() {
   const data = await api("/api/sessions");
   const sessions = data.sessions || [];
@@ -716,7 +837,7 @@ async function createSession({ announce = false, openProject = false } = {}) {
     const session = await api("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reasoning_level: state.reasoningLevel, project_path: projectPath }),
+      body: JSON.stringify({ reasoning_level: state.reasoningLevel, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
     });
     renderSession(session);
     await loadSessionsListOnly();
@@ -897,7 +1018,7 @@ async function startRun() {
     const result = await api("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_text: taskText, gated, reasoning_level: state.reasoningLevel, project_path: projectPath }),
+      body: JSON.stringify({ task_text: taskText, gated, reasoning_level: state.reasoningLevel, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
     });
     state.activeKind = "run";
     state.activeRun = result.run_id;
@@ -998,6 +1119,25 @@ $("clearWorkspace").addEventListener("click", () => {
   $("launchNote").textContent = "Runs will use a scratch workspace.";
 });
 $("refreshRuns").addEventListener("click", () => loadRuns().catch(() => {}));
+$("resetSkillsButton").addEventListener("click", () => {
+  state.skillOverrides = { enabled: [], disabled: [] };
+  renderSkillControls();
+});
+$("findSkillsButton").addEventListener("click", () => {
+  const finder = $("skillFinder");
+  const open = finder.hidden;
+  finder.hidden = !open;
+  $("findSkillsButton").setAttribute("aria-expanded", String(open));
+  if (open) $("skillSearch").focus();
+});
+$("searchSkillsButton").addEventListener("click", () => searchSkills("local"));
+$("searchRemoteSkillsButton").addEventListener("click", () => searchSkills("remote"));
+$("skillSearch").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    searchSkills("local");
+  }
+});
 $("sessionSearch").addEventListener("input", (event) => {
   state.sessionFilter = event.target.value;
   renderSessionList();
@@ -1051,6 +1191,7 @@ async function bootstrap() {
   syncResponsiveInert();
   try {
     await loadProjects();
+    await loadSkills($("workspacePath").value.trim());
     await Promise.all([loadReasoningLevels(), loadTasks(), loadRuns(), loadSessions()]);
   } catch (error) {
     $("launchNote").textContent = error.message;

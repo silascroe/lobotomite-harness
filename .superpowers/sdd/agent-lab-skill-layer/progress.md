@@ -8,5 +8,5 @@ Tasks:
 
 - Task 1: skill registry, built-in skills, project-local discovery, and deterministic selection — complete (tests: `python -m unittest discover -s agent-lab/harness -p 'test_*.py'` -> 28/28)
 - Task 2: harness prompt injection and inspect/plan/implement/verify finish gates — complete (tests: `python -m unittest discover -s agent-lab/harness -p 'test_*.py'` -> 32/32)
-- Task 3: server/UI skill controls, discovery endpoint, and persisted snapshots — pending
+- Task 3: server/UI skill controls, discovery endpoint, persisted snapshots, and CLI override handoff — complete (tests: server 15/15; UI contract 14/14; harness 32/32)
 - Task 4: documentation, end-to-end smoke verification, and final review — pending

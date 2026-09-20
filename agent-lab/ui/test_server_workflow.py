@@ -54,6 +54,54 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["workflow"]["status"], "active")
         self.assertTrue((session.run_dir / "workflow.json").is_file())
 
+    def test_skill_catalog_exposes_bundled_and_project_local_sources(self) -> None:
+        project = Path(self.temp_dir.name) / "project"
+        skill_dir = project / "skills" / "field-notes"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: field-notes\ndescription: Capture project notes.\n---\n\nUse evidence.\n",
+            encoding="utf-8",
+        )
+
+        catalog = MODULE.skill_catalog(str(project))
+
+        self.assertIn("inspect-and-plan", [item["name"] for item in catalog["skills"]])
+        local = next(item for item in catalog["skills"] if item["name"] == "field-notes")
+        self.assertEqual(local["source"], "project")
+        self.assertTrue(catalog["defaults"])
+
+    def test_session_persists_skill_overrides_and_snapshot(self) -> None:
+        project = Path(self.temp_dir.name) / "project"
+        skill_dir = project / "skills" / "field-notes"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: field-notes\ndescription: Capture project notes.\n---\n\nUse evidence.\n",
+            encoding="utf-8",
+        )
+        session = MODULE.InteractiveSession(
+            "chat-skills",
+            project_path=str(project),
+            skill_overrides={"enabled": ["field-notes"], "disabled": ["verify-before-finish"]},
+        )
+
+        state = session.state()
+        persisted = json.loads((session.run_dir / "session.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([item["name"] for item in state["skills"]["resolved"]], ["inspect-and-plan", "field-notes"])
+        self.assertEqual(persisted["skill_overrides"]["enabled"], ["field-notes"])
+        self.assertEqual(persisted["skills"]["disabled"], ["verify-before-finish"])
+
+        restored = MODULE.InteractiveSession.from_disk("chat-skills")
+        self.assertEqual([item["name"] for item in restored.state()["skills"]["resolved"]], ["inspect-and-plan", "field-notes"])
+
+    def test_discovery_endpoint_keeps_remote_search_explicit(self) -> None:
+        with self.assertRaises(MODULE.ApiError):
+            MODULE.discover_skills({"query": "browser", "source": "remote", "project_path": ""})
+
+        local = MODULE.discover_skills({"query": "verification", "source": "local", "project_path": ""})
+        self.assertEqual(local["source"], "local")
+        self.assertEqual(local["results"][0]["name"], "verify-before-finish")
+
     def test_run_state_loads_workflow_snapshot(self) -> None:
         run_dir = MODULE.RUNS_DIR / "run-workflow"
         project_dir = run_dir / "project"

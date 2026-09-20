@@ -946,6 +946,7 @@ dialog::backdrop { background: rgba(4, 6, 10, .72); backdrop-filter: blur(3px); 
 }
 
 .modal input[type="text"],
+.modal input[type="search"],
 .modal select,
 .modal textarea {
   width: 100%;
@@ -955,6 +956,7 @@ dialog::backdrop { background: rgba(4, 6, 10, .72); backdrop-filter: blur(3px); 
   color: var(--paper);
 }
 .modal input[type="text"],
+.modal input[type="search"],
 .modal select { height: 40px; padding: 0 11px; }
 .modal textarea { min-height: 190px; resize: vertical; padding: 12px; line-height: 1.55; }
 .modal input:focus,
@@ -965,6 +967,51 @@ dialog::backdrop { background: rgba(4, 6, 10, .72); backdrop-filter: blur(3px); 
 .grow { min-width: 0; flex: 1; margin: 0 !important; }
 .align-end { flex: none; }
 .button-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.skill-config {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--steel) 62%, transparent);
+}
+.skill-config-heading,
+.skill-config-actions,
+.skill-finder-row,
+.skill-option,
+.skill-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.skill-config-heading { justify-content: space-between; }
+.skill-config h3 { margin: 0; color: var(--paper); font-family: var(--ui-font); font-size: 13px; }
+.skill-config p { margin: 4px 0 0; color: var(--slate); font-size: 11px; line-height: 1.4; }
+.skill-options { display: grid; gap: 7px; margin-top: 12px; }
+.skill-option {
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ink) 65%, transparent);
+  cursor: pointer;
+}
+.skill-option input { flex: none; width: 15px; height: 15px; margin-top: 1px; accent-color: var(--iris); }
+.skill-option-copy { min-width: 0; flex: 1; }
+.skill-option-name { color: var(--paper); font: 11px/1.2 var(--mono-font); }
+.skill-option-description { margin-top: 4px; color: var(--slate); font-size: 11px; line-height: 1.35; }
+.skill-source { flex: none; color: var(--iris-strong); font: 9px/1 var(--mono-font); }
+.skill-config-actions { justify-content: space-between; margin-top: 11px; }
+.skill-config-actions small { color: var(--slate); font-size: 10px; line-height: 1.35; }
+.skill-finder { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.skill-finder-row { align-items: flex-end; flex-wrap: wrap; }
+.skill-finder-row .grow { min-width: 180px; }
+.skill-finder-row .grow input { margin-top: 6px; }
+.skill-results { display: grid; gap: 7px; margin-top: 10px; color: var(--slate); font-size: 11px; line-height: 1.4; }
+.skill-result { align-items: flex-start; justify-content: space-between; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--ink); }
+.skill-result-copy { min-width: 0; }
+.skill-result-name { color: var(--paper); font: 10px/1.2 var(--mono-font); }
+.skill-result-meta { margin-top: 4px; color: var(--slate); font-size: 10px; }
+.skill-result button { flex: none; }
 .workspace-status,
 .launch-note {
   margin-top: 14px;
@@ -1083,6 +1130,9 @@ dialog::backdrop { background: rgba(4, 6, 10, .72); backdrop-filter: blur(3px); 
   .modal-body { padding: 15px; }
   .workspace-choice { padding: 14px; }
   .inline-form { align-items: stretch; flex-direction: column; }
+  .skill-config-actions { align-items: flex-start; flex-direction: column; }
+  .skill-finder-row { align-items: stretch; flex-direction: column; }
+  .skill-finder-row .align-end { width: 100%; }
   .align-end { align-self: flex-start; }
 }
 

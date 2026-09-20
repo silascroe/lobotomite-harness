@@ -30,7 +30,8 @@ test("critical legacy capabilities remain mounted", () => {
     "projectSelect", "projectName", "workspacePath", "sessionSearch", "sessionList", "runList",
     "taskPreset", "taskText", "useGates", "reasoningLevel", "workflowSteps", "chatMessages",
     "chatInput", "retryJobButton", "activity", "fileList", "filePreview", "rawOutput",
-    "workspaceDialog", "runDialog", "detailsBackdrop", "rightRail",
+    "workspaceDialog", "runDialog", "detailsBackdrop", "rightRail", "skillSummary",
+    "skillOverride", "findSkillsButton", "skillSearch", "skillResults",
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `missing #${id}`);
   }
@@ -50,6 +51,18 @@ test("workflow and retry contracts remain intact", () => {
   assert.match(css, /\.workflow-step\.active/);
   assert.match(css, /\.workflow-step\.blocked/);
   assert.match(css, /\.job-recovery/);
+});
+
+test("skill controls expose recorded defaults, overrides, and discovery", () => {
+  assert.match(html, /id="skillSummary"/);
+  assert.match(html, /id="skillOverride"/);
+  assert.match(html, /id="findSkillsButton"/);
+  assert.match(html, /id="skillSearch"/);
+  assert.match(html, /id="skillResults"/);
+  assert.match(app, /\/api\/skills/);
+  assert.match(app, /\/api\/skills\/discover/);
+  assert.match(app, /skill_overrides/);
+  assert.match(app, /function renderSkill/);
 });
 
 test("browser code owns mode, modal, and details presentation state", () => {
