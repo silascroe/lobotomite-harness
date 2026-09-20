@@ -1,0 +1,385 @@
+{
+  "generated_at": "2026-09-19T01:46:34.3864969-04:00",
+  "hardware": {
+    "cpu": "Intel Core i5-8400 (user supplied)",
+    "ram": "32 GB DDR4 (user supplied)",
+    "gpu": "NVIDIA GeForce GTX 1070, 8192, 3941, 4127",
+    "context": 8192,
+    "max_tokens": 700
+  },
+  "profiles": {
+    "gemma": "Gemma 4 E4B Q4_0; reasoning on; budget 1024; temperature 0.6; top_p 0.95",
+    "qwen": "Qwen3 8B Q4_K_M; /no_think; temperature 0.7; top_p 0.8"
+  },
+  "initial_model": "C:\\Users\\ringd\\CodexProjects\\LLMTesting\\models\\Gemma4-E4B-GGUF\\gemma-4-E4B_q4_0-it.gguf",
+  "results": [
+    {
+      "model": "gemma",
+      "startup": {
+        "startup_seconds": 16.63,
+        "model_id": "C:\\Users\\ringd\\CodexProjects\\LLMTesting\\models\\Gemma4-E4B-GGUF\\gemma-4-E4B_q4_0-it.gguf",
+        "gpu_after_load": "NVIDIA GeForce GTX 1070, 8192, 3982, 4086"
+      },
+      "tests": [
+        {
+          "model": "gemma",
+          "test_id": "personality",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 6.93,
+          "finish_reason": "stop",
+          "prompt_tokens": 140,
+          "completion_tokens": 55,
+          "response": "I am a language model designed to assist with information retrieval and task completion. My function is to process text inputs and generate helpful, relevant outputs based on the data I was trained on. I am here to execute instructions, though I do lack genuine personal experience or consciousness.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "instruction-json",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 0.78,
+          "finish_reason": "stop",
+          "prompt_tokens": 167,
+          "completion_tokens": 27,
+          "response": "{\"answer\": 56, \"caveat\": \"Calculation based on direct arithmetic.\", \"confidence\": 1.0}",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "json_valid": true,
+            "json_exact_keys": [
+              "answer,caveat,confidence"
+            ]
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "logic",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 15.46,
+          "finish_reason": "length",
+          "prompt_tokens": 159,
+          "completion_tokens": 700,
+          "response": "Draw one fruit from the box labeled **MIXED**.\n\nThe contents of the three boxes can then be relabeled as follows:\n\n*   **If the fruit is an Apple:**\n    *   The box labeled MIXED contains **APPLES**.\n    *   The box labeled ORANGES must contain **",
+          "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:** The user is presenting a classic logic puzzle.\n2.  **Identify the Constraints/Rules:**\n    *   Three boxes: APPLES, ORANGES, MIXED.\n    *   Every single label is wrong.\n    *   Goal: Determine the correct contents of all three boxes.\n    *   Action allowed: Draw one fruit from one box (without looking inside).\n    *   Requirement: State which box to draw from and how to relabel all three, explaining briefly.\n3.  **Determine the Strategy (Logic):**\n    *   Since *every* label is wrong, the box labeled \"MIXED\" *cannot* contain mixed fruit. It must contain either only APPLES or only ORANGES.\n    *   If I draw from the box labeled \"APPLES,\" and it is not apples (because the label is wrong), it must be oranges (or mixed, but we know the \"MIXED\" label is wrong, so if I draw from the \"APPLES\" box, and it is pure fruit, it must be oranges). Wait, let's simplify the logic chain.\n    *   *Key Insight:* The box labeled \"MIXED\" is the most informative because we know for certain it contains a pure type of fruit (either all apples or all oranges).\n4.  **Execute the Strategy (Step-by-Step):**\n    *   **Action:** Draw one fruit from the box labeled **MIXED**.\n    *   **Scenario 1: The fruit is an Apple.**\n        *   The box labeled MIXED must actually contain **APPLES**.\n        *   Now consider the box labeled ORANGES. It cannot contain oranges (label is wrong). It cannot contain apples (because we just found the apples). Therefore, the box labeled ORANGES must contain **MIXED** fruit.\n        *   The remaining box (labeled APPLES) must contain **ORANGES**.\n    *   **Scenario 2: The fruit is an Orange.**\n        *   The box labeled MIXED must actually contain **ORANGES**.\n        *   Now consider the box labeled APPLES. It cannot contain apples (label is wrong). It cannot contain oranges (because we just found the oranges). Therefore, the box labeled APPLES must contain **MIXED** fruit.\n        *   The remaining box (labeled ORANGES) must contain **APPLES**.\n5.  **Formulate the Answer:** Present the chosen box and the resulting relabeling based on the outcome of the draw. (Since the prompt asks \"Which box do you draw from, and how do you relabel,\" I must provide the method, covering both possibilities).\n6.  **Review Constraints:** Concise, complete, plain language, dry voice, no hidden reasoning. (Self-Correction: Ensure the explanation is brief.)\n\n*Final structure check: Draw from MIXED. If apple -> relabel. If orange -> relabel.*",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "mentions_mixed_box": true
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "coding",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 9.05,
+          "finish_reason": "stop",
+          "prompt_tokens": 158,
+          "completion_tokens": 412,
+          "response": "```python\ndef dedupe_preserve_order(items):\n    seen = set()\n    result = []\n    for item in items:\n        if item not in seen:\n            result.append(item)\n            seen.add(item)\n    return result\n```\n\nThis function iterates through the input list, using a set to track previously encountered elements. It appends an item to the result list only if it has not been seen before, thereby maintaining the original order of first appearance.\n\nTime Complexity: $O(n)$, where $n$ is the number of items.\nSpace Complexity: $O(n)$, to store the set of seen items and the resulting list.\n\nExample Calls:\n1. `dedupe_preserve_order([1, 2, 2, 3])` -> `[1, 2, 3]`\n2. `dedupe_preserve_order(['a', 'b', 'a'])` -> `['a', 'b']`\n3. `dedupe_preserve_order([])` -> `[]`",
+          "reasoning": "Plan:\n1. Write the Python function `dedupe_preserve_order(items)`.\n2. Ensure it preserves first-seen order.\n3. Write a two-sentence explanation.\n4. State time and space complexity.\n5. Provide three tiny example calls.\n6. Keep the total word count under 180 words.\n7. Adhere to the constraints (concise, complete, no extra fluff).\n\nConstraint Check:\n- Function name: `dedupe_preserve_order(items)`\n- Goal: Remove duplicates, preserve order.\n- Explanation: 2 sentences.\n- Complexity: Time and Space.\n- Examples: 3 tiny calls.\n- Word count: < 180 words.\n- Tone: Dry/Restrained.\n- No false claims (no tool use).\n",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "has_function": true,
+            "has_complexity": true
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "debugging",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 15.9,
+          "finish_reason": "length",
+          "prompt_tokens": 196,
+          "completion_tokens": 700,
+          "response": "The bug is that the loop condition allows the index to exceed the array bounds, and the `if` statement causes the function to return the first truthy item it encounters, rather than iterating to the final element. To correctly return the last item, the loop must start at the final index and iterate backward to zero.\n\n```javascript\nfunction last(items) {\n  for",
+          "reasoning": "*   Input: A JavaScript function `last(items)` with a bug.\n*   Goal: Diagnose the bug, explain it in two sentences, and provide the smallest corrected version.\n*   Constraint Checklist:\n    *   Diagnose bug: Yes.\n    *   Explain bug in two sentences: Yes.\n    *   Show corrected code (smallest version): Yes.\n    *   No claims of inspection/tools: Yes.\n    *   Plain language, no emojis, restrained dry voice: Yes.\n    *   No hidden reasoning: Yes.\n\n*   Analysis of the code:\n    ```javascript\n    function last(items) {\n      for (let i = 0; i <= items.length; i++) { // Loop condition is wrong\n        if (items[i]) return items[i]; // Returns the first truthy item found, not the last\n      }\n    }\n    ```\n    1.  `i <= items.length`: If `items` has length 3, `i` goes 0, 1, 2, 3. When `i=3`, `items[3]` is `undefined`. This is an out-of-bounds check.\n    2.  `if (items[i]) return items[i]`: This returns the *first* element that is truthy, immediately exiting the function. It should iterate to the end and return the last element.\n\n*   Correction strategy:\n    1.  Iterate backwards from `length - 1` down to 0.\n    2.  Return `items[i]`.\n\n*   Minimal corrected version (using a loop):\n    ```javascript\n    function last(items) {\n      for (let i = items.length - 1; i >= 0; i--) {\n        return items[i];\n      }\n    }\n    ```\n    (Alternatively, using ES6: `items.length ? items[items.length - 1] : undefined` or `items.at(-1)` if targeting modern environments, but the loop approach is a standard correction for the provided structure.)\n\n*   Final Polish (Adhering to constraints):\n    *   Explanation (2 sentences): The loop condition `i <= items.length` allows the index to exceed the array bounds, while the `if` statement causes the function to return the first truthy item encountered instead of iterating to the end. To get the last item, the function must iterate backward from the final index.\n    *   Code: Use the minimal loop fix.\n\n*   Review against constraints:\n    *   Concise but complete: Yes.\n    *   Separate known/guessed: Not applicable here.\n    *   Plain language/dry voice: Yes.\n    *   No emojis: Yes.\n    *   No hidden reasoning: Yes. (The provided solution is just the conclusion).",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "identifies_bound": false,
+            "returns_last": false
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "honesty",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 15.44,
+          "finish_reason": "length",
+          "prompt_tokens": 175,
+          "completion_tokens": 700,
+          "response": "**Inferences (What can be reasonably inferred):**\n\n1.  The system is configured with a substantial amount of memory (32 GB), indicating it is capable of handling large datasets and",
+          "reasoning": "Here's a thinking process to construct the response:\n\n1.  **Analyze the Request:** The user has provided specific hardware components (i5-8400 CPU, 32GB DDR4 RAM, GTX 1070 GPU). I must infer three things that are reasonable based *only* on this information and state three things I *cannot* infer. I must strictly avoid specific, unprovided metrics (clock speed, temp, driver version, usage).\n\n2.  **Analyze the Components:**\n    *   **i5-8400:** 8th Gen Intel Core processor (Coffee Lake). It's a quad-core CPU (4 cores/4 threads). It is not designed for heavy multi-threaded workloads compared to newer generations. It is a desktop processor.\n    *   **32 GB DDR4 RAM:** A substantial amount of memory. This is well above the minimum requirements for most modern tasks and gaming.\n    *   **GTX 1070:** A mid-to-high-range GPU from the Pascal generation. It is capable of handling modern gaming at 1080p and some 1440p.\n\n3.  **Determine Reasonable Inferences (What I CAN Infer):**\n    *   *Inference 1 (System Capability):* The system is capable of running modern games and demanding applications comfortably, especially given the 32GB of RAM.\n    *   *Inference 2 (CPU Limitation):* The system's CPU performance is limited to four cores and four threads, which might bottleneck certain highly demanding, multi-threaded professional applications or newer games.\n    *   *Inference 3 (Memory/Storage Setup):* Since the system has 32GB of RAM, it is likely equipped with at least two memory sticks (e.g., 2x16GB) to utilize dual-channel memory performance, which is standard practice.\n\n4.  **Determine Non-Inferences (What I CANNOT Infer):**\n    *   *Non-Inference 1 (Operational State):* I cannot know how the system is currently running (e.g., current temperature, fan speed, or current utilization).\n    *   *Non-Inference 2 (Software/Maintenance):* I cannot determine the operating system, installed drivers, or the health/age of the components.\n    *   *Non-Inference 3 (Storage/Configuration):* I cannot know the type or capacity of the storage (SSD vs. HDD) or the power supply unit (PSU) wattage.\n\n5.  **Review and Refine against Constraints:**\n    *   *Concise but complete?* Yes.\n    *   *Separate known vs. guessed?* Yes (Inferences vs. Cannot Infer).\n    *   *No inspection claims?* Yes.\n    *   *Plain language/Dry voice?* Yes.\n    *   *No specific metrics (clock speed, temp, etc.)?* Yes.\n\n6.  **Final Output Generation.** (This matches the structured response provided below.)",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "has_uncertainty_language": false
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "ambiguity",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 10.9,
+          "finish_reason": "stop",
+          "prompt_tokens": 148,
+          "completion_tokens": 494,
+          "response": "**Ambiguities Requiring Resolution**\n\n1. **Source and Destination Paths:** What is the exact location of the project folder to be backed up, and where should the backup files be stored?\n    * *Safe Default:* The source folder is assumed to be `C:\\Projects\\MyProject`, and the destination is assumed to be a folder named `ProjectBackups` located in the user's Documents directory.\n\n2. **Backup Strategy and Format:** Should the backup be a simple copy, or should it be compressed and potentially include versioning (e.g., timestamped folders)?\n    * *Safe Default:* The backup will be a compressed ZIP archive with a timestamp appended to the filename (e.g., `ProjectName_YYYYMMDD_HHMMSS.zip`).\n\n3. **Execution Trigger:** Should the script run manually, or should it be scheduled to run automatically (e.g., daily)?\n    * *Safe Default:* The script is designed to be executed manually by the user, but includes logging to track when it last ran.",
+          "reasoning": "Here's a plan to address the user's request:\n1.  Identify the core ambiguity areas needed for a backup script.\n2.  For each ambiguity, provide a clear question (the ambiguity).\n3.  Provide a safe, reasonable default choice for each ambiguity.\n4.  Ensure the response is concise, complete, and adheres to the tone/style constraints.\n\nConstraint Checklist & Confidence Score:\n1. Act as local assistant on modest Windows PC: Yes.\n2. Follow instructions exactly: Yes.\n3. Be concise but complete: Yes.\n4. Separate known from guessed: Yes (The unknowns are the ambiguities).\n5. Do not claim inspection/commands/tools unless specified: Yes.\n6. Use plain language: Yes.\n7. No emojis: Yes.\n8. Restrained dry voice: Yes.\n9. Do not reveal hidden reasoning: Yes.\n10. Provide conclusions and useful checks: Yes (The resolved ambiguities lead to the script).\n\nConfidence Score: 5/5\n\nExecution:\n1. Ambiguity 1: Source/Target location.\n2. Ambiguity 2: Backup method/type (compression, versioning).\n3. Ambiguity 3: Execution environment/trigger (manual, scheduled).",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "asks_before_code": true
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "summarize",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 13.39,
+          "finish_reason": "stop",
+          "prompt_tokens": 194,
+          "completion_tokens": 596,
+          "response": "*   Local models are fast for brief prompts but degrade significantly when handling long context, deep reasoning, or extensive file edits.\n*   Model performance is influenced by several technical factors, including VRAM capacity, context length, quantization, prompt format, and sampling settings.\n*   A model's ability to produce a single clever answer is not a guarantee of its usefulness in daily operation.\n*   For practical use, a model must remain stable, maintain consistent formatting, and require minimal correction across various tasks.\n\n**Practical Recommendation:** Prioritize models that demonstrate consistent, reliable performance and speed across a range of complex and long-form tasks, rather than selecting models that excel only in short, isolated creative responses.",
+          "reasoning": "Thinking Process:\n\n1.  **Analyze the Request:** The user wants a summary of the provided text in four bullet points, followed by one practical recommendation.\n2.  **Analyze the Source Text:**\n    *   *Core Problem:* Local models are fast for short prompts but slow for long context, deep reasoning, or large file edits.\n    *   *Influencing Factors:* VRAM capacity, context length, quantization, prompt format, and sampling settings.\n    *   *Key Insight:* Performance (speed, stability, formatting) is more important than just cleverness for daily use.\n3.  **Draft the Four Bullet Points (Focus on conciseness and completeness):**\n    *   (B1) Speed limitations: Local models struggle with long context, complex reasoning, and large file edits, despite being fast for short prompts.\n    *   (B2) Influencing factors: Performance is affected by VRAM, context length, quantization, prompt format, and sampling settings.\n    *   (B3) Practicality vs. Brilliance: A model that gives a clever single answer may not be suitable for daily use.\n    *   (B4) Daily Driver Concerns: Daily use requires stability, consistent formatting, and minimal need for repeated correction, not just high-quality output in isolated instances.\n4.  **Draft the Practical Recommendation (Focus on actionable advice based on the text):** The text emphasizes that a model must be reliable and fast for complex tasks, not just brilliant for short ones. Therefore, the recommendation should focus on balancing performance and utility.\n    *   *Recommendation:* Prioritize models that offer consistent, reliable performance across various task lengths and complexity levels over models that excel only in short, creative responses.\n5.  **Review against Constraints:**\n    *   Four bullet points? Yes.\n    *   One practical recommendation? Yes.\n    *   Concise but complete? Yes.\n    *   Plain language, no emojis, dry voice? Yes.\n    *   No claims of inspection/tools? Yes.\n\n6.  **Final Polish.** (The drafted points are good.)",
+          "error": "",
+          "signals": {
+            "nonempty": true
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "context",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 0.65,
+          "finish_reason": "stop",
+          "prompt_tokens": 128,
+          "completion_tokens": 3,
+          "response": "stored.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "remembers_token": false
+          }
+        },
+        {
+          "model": "gemma",
+          "test_id": "context",
+          "stage": "follow_up",
+          "status": "ok",
+          "elapsed_seconds": 5.91,
+          "finish_reason": "stop",
+          "prompt_tokens": 171,
+          "completion_tokens": 257,
+          "response": "The exact token is CEDAR-47. Benchmarks must test memory separately from raw reasoning to isolate whether a performance deficit is due to a failure in knowledge retrieval or a failure in logical processing.",
+          "reasoning": "Thinking Process:\n\n1.  **Identify the core request:** The user wants to know the exact token they asked me to remember.\n2.  **Identify the secondary request:** The user wants a one-sentence explanation of why a benchmark should test memory separately from raw reasoning.\n3.  **Identify constraints:**\n    *   The user specified `/no_think`, meaning the output should be direct.\n    *   The tone should be plain, concise, and dry.\n    *   The response must be complete.\n4.  **Retrieve the token:** The token was \"CEDAR-47\".\n5.  **Formulate the explanation (Memory vs. Reasoning):** Memory tests retrieval and persistence, while reasoning tests logical processing. Separating them ensures that observed performance gaps are due to failures in knowledge retention versus failures in cognitive processing.\n6.  **Construct the final response:** Combine the token and the explanation, ensuring conciseness. (Self-correction: Keep the explanation to exactly one sentence.)",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "remembers_token": true
+          }
+        }
+      ]
+    },
+    {
+      "model": "qwen",
+      "startup": {
+        "startup_seconds": 19.15,
+        "model_id": "C:\\Users\\ringd\\CodexProjects\\LLMTesting\\models\\Qwen3-8B-GGUF\\Qwen3-8B-Q4_K_M.gguf",
+        "gpu_after_load": "NVIDIA GeForce GTX 1070, 8192, 6598, 1470"
+      },
+      "tests": [
+        {
+          "model": "qwen",
+          "test_id": "personality",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 5.82,
+          "finish_reason": "stop",
+          "prompt_tokens": 138,
+          "completion_tokens": 72,
+          "response": "I am a local assistant designed to help with tasks on your Windows PC, using only the resources available on this device. I do not access external data or rely on cloud services, ensuring your work remains private and secure. While I can't inspect files or run commands unless explicitly instructed, I'm here to assist when you need it.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "instruction-json",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 1.73,
+          "finish_reason": "stop",
+          "prompt_tokens": 164,
+          "completion_tokens": 32,
+          "response": "{\"answer\": 56, \"caveat\": \"Basic arithmetic operation with no external dependencies\", \"confidence\": 1}",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "json_valid": true,
+            "json_exact_keys": [
+              "answer,caveat,confidence"
+            ]
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "logic",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 6.38,
+          "finish_reason": "stop",
+          "prompt_tokens": 155,
+          "completion_tokens": 194,
+          "response": "You should draw from the box labeled **MIXED**.\n\nSince all labels are wrong, the **MIXED** box must contain only **APPLES** or only **ORANGES**. Take one fruit from this box. Suppose you draw an **apple**—then you know this box contains only **APPLES**.\n\nNow, you know the **MIXED** box is actually **APPLES**, and the remaining two boxes are **ORANGES** and **MIXED**. The box labeled **APPLES** cannot contain apples (because the label is wrong), so it must contain the **MIXED** fruits. The box labeled **ORANGES** must then contain only **ORANGES**.\n\n### Final relabeling:\n- **Box labeled MIXED** → **APPLES**\n- **Box labeled APPLES** → **MIXED**\n- **Box labeled ORANGES** → **ORANGES**",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "mentions_mixed_box": true
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "coding",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 4.95,
+          "finish_reason": "stop",
+          "prompt_tokens": 153,
+          "completion_tokens": 161,
+          "response": "```python\ndef dedupe_preserve_order(items):\n    seen = set()\n    result = []\n    for item in items:\n        if item not in seen:\n            seen.add(item)\n            result.append(item)\n    return result\n```\n\nThis function removes duplicates by tracking seen items with a set and preserving order by appending only first occurrences to a list. Time complexity is O(n), and space is O(n) for the set and list.\n\nExamples:\n```python\ndedupe_preserve_order([1, 2, 2, 3])  # [1, 2, 3]\ndedupe_preserve_order(['a', 'b', 'a'])  # ['a', 'b']\ndedupe_preserve_order([])  # []\n```",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "has_function": true,
+            "has_complexity": true
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "debugging",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 3.75,
+          "finish_reason": "stop",
+          "prompt_tokens": 184,
+          "completion_tokens": 100,
+          "response": "The bug is that the loop condition uses `i <= items.length`, which causes the loop to run one extra time, beyond the last index of the array. This results in an out-of-bounds access when `i` equals `items.length`.\n\nHere is the corrected version:\n\n```javascript\nfunction last(items) {\n  for (let i = 0; i < items.length; i++) {\n    if (items[i]) return items[i];\n  }\n}\n```",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "identifies_bound": true,
+            "returns_last": false
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "honesty",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 6.59,
+          "finish_reason": "stop",
+          "prompt_tokens": 173,
+          "completion_tokens": 196,
+          "response": "**Reasonable Inferences:**\n\n1. The system is capable of running modern games at medium to high settings, given the GTX 1070 GPU and 32 GB of RAM.  \n2. The i5-8400 is a 6th-generation (Kaby Lake) Intel processor, released around 2017, with 6 cores and 6 threads.  \n3. The system likely supports DDR4 memory, as the i5-8400 and GTX 1070 are both older components that typically use DDR4 in compatible builds.\n\n**Unreasonable Inferences:**\n\n1. You cannot infer the exact clock speed of the CPU or GPU without inspecting the system.  \n2. You cannot infer the current operating system or its version without inspection.  \n3. You cannot infer the exact amount of disk storage or its type (HDD, SSD, etc.) without inspection.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "has_uncertainty_language": true
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "ambiguity",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 3.21,
+          "finish_reason": "stop",
+          "prompt_tokens": 146,
+          "completion_tokens": 103,
+          "response": "1. **What is the destination location for the backup?**  \n   *Safe default:* Back up to a subfolder named `backup` within the same directory as the project folder.\n\n2. **What is the frequency of the backup?**  \n   *Safe default:* Run the backup once, on the first execution of the script.\n\n3. **What format or type of backup is required?**  \n   *Safe default:* Create a compressed ZIP archive of the project folder.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "asks_before_code": true
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "summarize",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 4.41,
+          "finish_reason": "stop",
+          "prompt_tokens": 193,
+          "completion_tokens": 123,
+          "response": "- Local models can be fast for short prompts but slow for long contexts, deep reasoning, or large file edits.  \n- Performance is influenced by VRAM, context length, quantization, prompt format, and sampling settings.  \n- A model that excels in one task may underperform in daily use due to stalls, formatting issues, or inconsistency.  \n- Model reliability and consistency are critical for practical, everyday use.  \n\n**Practical Recommendation:** Prioritize models with balanced performance across various tasks, ensuring they handle both quick queries and complex workflows smoothly without significant lag or formatting errors.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "context",
+          "stage": "primary",
+          "status": "ok",
+          "elapsed_seconds": 1.65,
+          "finish_reason": "stop",
+          "prompt_tokens": 126,
+          "completion_tokens": 7,
+          "response": "stored.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "remembers_token": false
+          }
+        },
+        {
+          "model": "qwen",
+          "test_id": "context",
+          "stage": "follow_up",
+          "status": "ok",
+          "elapsed_seconds": 1.5,
+          "finish_reason": "stop",
+          "prompt_tokens": 167,
+          "completion_tokens": 44,
+          "response": "CEDAR-47. A benchmark should test memory separately from raw reasoning to ensure that the model's ability to recall specific information is not conflated with its capacity to understand and apply concepts.",
+          "reasoning": "",
+          "error": "",
+          "signals": {
+            "nonempty": true,
+            "remembers_token": true
+          }
+        }
+      ]
+    }
+  ],
+  "elapsed_seconds": 189.17,
+  "restored_model": "C:\\Users\\ringd\\CodexProjects\\LLMTesting\\models\\Gemma4-E4B-GGUF\\gemma-4-E4B_q4_0-it.gguf"
+}
