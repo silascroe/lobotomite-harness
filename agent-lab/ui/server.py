@@ -26,6 +26,7 @@ PROJECTS_DIR = ROOT / "agent-lab" / "projects"
 HARNESS = ROOT / "agent-lab" / "harness" / "agent_harness.py"
 CONFIG = ROOT / "agent-lab" / "harness" / "config.json"
 RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,50}")
+STATIC_CACHE_CONTROL = "no-store, max-age=0"
 
 sys.path.insert(0, str(HARNESS.parent))
 from agent_harness import (  # noqa: E402
@@ -913,6 +914,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", STATIC_CACHE_CONTROL)
         self.end_headers()
         self.wfile.write(data)
 

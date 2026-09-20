@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import importlib.util
 import json
 import sys
@@ -101,6 +102,37 @@ class ServerWorkflowTests(unittest.TestCase):
         local = MODULE.discover_skills({"query": "verification", "source": "local", "project_path": ""})
         self.assertEqual(local["source"], "local")
         self.assertEqual(local["results"][0]["name"], "verify-before-finish")
+
+    def test_static_assets_are_served_without_stale_cache(self) -> None:
+        static_root = Path(self.temp_dir.name) / "static"
+        static_root.mkdir()
+        (static_root / "index.html").write_bytes(b"<main>fresh</main>\n")
+        previous_ui_dir = MODULE.UI_DIR
+        MODULE.UI_DIR = static_root
+
+        class Probe:
+            def __init__(self) -> None:
+                self.headers: dict[str, str] = {}
+                self.wfile = io.BytesIO()
+
+            def send_response(self, status: int) -> None:
+                self.status = status
+
+            def send_header(self, name: str, value: str) -> None:
+                self.headers[name] = value
+
+            def end_headers(self) -> None:
+                pass
+
+        probe = Probe()
+        try:
+            MODULE.Handler.send_static(probe, "index.html")
+        finally:
+            MODULE.UI_DIR = previous_ui_dir
+
+        self.assertEqual(probe.status, 200)
+        self.assertEqual(probe.headers["Cache-Control"], "no-store, max-age=0")
+        self.assertEqual(probe.wfile.getvalue(), b"<main>fresh</main>\n")
 
     def test_run_state_loads_workflow_snapshot(self) -> None:
         run_dir = MODULE.RUNS_DIR / "run-workflow"
