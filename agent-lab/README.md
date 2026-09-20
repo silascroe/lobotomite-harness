@@ -88,6 +88,20 @@ The current snapshot is written to the harness-owned `workflow.json` beside the 
 
 The Superpowers checkout under `.research/superpowers-upstream` is reference material only. It is not imported, executed, or required to run Agent Lab. See `docs/research/superpowers-reference-review.md` for the boundary and the design decisions this native v1 keeps or leaves out.
 
+### Native skills and workflow gates
+
+Agent Lab has a small native skill catalog in `agent-lab/harness/skills.py`. The bundled defaults are `inspect-and-plan` and `verify-before-finish`. A project can add its own skills at `skills/<name>/SKILL.md`; the file needs YAML-style `name` and `description` front matter followed by the skill instructions. Project-local skills are discovered for that project only, and a duplicate name cannot shadow a bundled skill.
+
+The Run dialog shows the selected skills and lets you enable project-local skills or disable a default for one task. The same selection is persisted with chats and runs, exposed through the Inspector, and can be supplied to the CLI as JSON:
+
+```powershell
+.\scripts\run-agent-lab.ps1 -RunId run-skilled -SkillOverridesJson '{"enabled":["browser-checks"],"disabled":[]}'
+```
+
+`find_skills` is a discovery-only action. Local catalog search is available to the model and UI without installation. Searching skills.sh is deliberately a separate, explicit UI action and requires confirmation; it returns recommendations only and never installs or activates remote code.
+
+Evaluated runs use the workflow gates by default. A successful finish must have observable evidence for inspect, plan, implement, and verify. Inspection comes from successful reads/listing, implementation from writes or patches, and verification from a successful validation command after a mutation. Interactive chats and explicitly ungated custom runs remain flexible; use `--no-gates` only when the task is intentionally outside benchmark evaluation.
+
 ### Restart-safe conversations
 
 The UI server rehydrates persisted conversations at startup from each session's `session.json`, `transcript.json`, `workflow.json`, `config.json`, and workspace metadata. The conversation list therefore survives closing or restarting the PowerShell process. A session that was marked busy when the process disappeared is reopened with `busy: false`; a completed session is ready to continue, while an in-flight turn is explicitly marked interrupted for recovery. No dead worker is assumed to still exist. The transcript is restored as model context, while the shorter conversation record drives the visible chat. Malformed session records are skipped so one damaged folder cannot prevent the console from starting.

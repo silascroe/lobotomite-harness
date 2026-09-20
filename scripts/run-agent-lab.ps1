@@ -4,7 +4,8 @@ param(
     [string]$RunId,
     [string]$Config = 'agent-lab/harness/config.json',
     [string]$Template,
-    [string]$ProjectDir
+    [string]$ProjectDir,
+    [string]$SkillOverridesJson
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,9 @@ if ($Template) {
 }
 if ($ProjectDir) {
     $arguments += @('--project-dir', $ProjectDir)
+}
+if ($SkillOverridesJson) {
+    $arguments += @('--skill-overrides-json', $SkillOverridesJson)
 }
 
 & $python @arguments
