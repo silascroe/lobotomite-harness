@@ -49,6 +49,113 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertIn("Every response must be exactly one JSON object", prompt)
         self.assertIn("Never call the user", prompt)
 
+    def test_selected_skills_are_injected_without_unused_skill_text(self) -> None:
+        harness = MODULE.AgentHarness(
+            task="build task",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "skill_overrides": {"disabled": ["verify-before-finish"]},
+            },
+            run_dir=self.run_dir,
+            project_dir=self.project_dir,
+            template_dir=None,
+        )
+
+        prompt = harness.system_content()
+
+        self.assertIn("[Skill: inspect-and-plan]", prompt)
+        self.assertNotIn("[Skill: verify-before-finish]", prompt)
+        self.assertEqual([item["name"] for item in harness.skill_metadata()["resolved"]], ["inspect-and-plan"])
+
+    def test_find_skills_is_an_allowlisted_local_recommendation_action(self) -> None:
+        result = self.harness.dispatch("find_skills", {"query": "verification"})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "local")
+        self.assertEqual(result["results"][0]["name"], "verify-before-finish")
+
+        with self.assertRaises(MODULE.HarnessError):
+            self.harness.dispatch("find_skills", {"query": "browser", "source": "remote"})
+
+    def test_gated_finish_requires_inspect_plan_implement_and_verify_evidence(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "gated-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="gated task",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "allow_commands": ["cmd"],
+                "require_workflow_gates": True,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+
+        self.assertIn("inspect", harness.missing_workflow_gates())
+        self.assertIn("plan", harness.missing_workflow_gates())
+        self.assertIn("implement", harness.missing_workflow_gates())
+        self.assertIn("verify", harness.missing_workflow_gates())
+        self.assertIn("workflow evidence missing", harness.finish_issue({"status": "success"}))
+
+        with self.assertRaises(MODULE.HarnessError):
+            harness.dispatch(
+                "workflow_checkpoint",
+                {
+                    "phase": "plan",
+                    "summary": "Plan before inspection should be rejected.",
+                    "next_action": "Inspect first.",
+                },
+            )
+        harness.dispatch("list_files", {"path": "."})
+        harness.dispatch(
+            "workflow_checkpoint",
+            {
+                "phase": "plan",
+                "summary": "The project is empty and needs one page.",
+                "next_action": "Write the page.",
+            },
+        )
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>ok</main>\n"})
+        harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+
+        self.assertEqual(harness.missing_workflow_gates(), [])
+        self.assertIsNone(harness.finish_issue({"status": "success"}))
+
+    def test_new_mutation_invalidates_previous_verification_evidence(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "evidence-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="evidence task",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "allow_commands": ["cmd"],
+                "require_workflow_gates": True,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.dispatch("list_files", {"path": "."})
+        harness.dispatch(
+            "workflow_checkpoint",
+            {"phase": "plan", "summary": "Plan recorded.", "next_action": "Implement."},
+        )
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>one</main>\n"})
+        harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+        self.assertNotIn("verify", harness.missing_workflow_gates())
+
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>two</main>\n"})
+
+        self.assertIn("verify", harness.missing_workflow_gates())
+
     def test_add_and_update_patch(self) -> None:
         added = self.harness.apply_patch(
             {

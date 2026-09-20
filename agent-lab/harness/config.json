@@ -10,6 +10,8 @@
   "reasoning_profile": "gemma",
   "reasoning_answer_tokens": 1024,
   "personality": "slight_demon",
+  "require_workflow_gates": true,
+  "allow_remote_skill_search": false,
   "tool_output_chars": 10000,
   "command_timeout_seconds": 20,
   "max_file_bytes": 60000,

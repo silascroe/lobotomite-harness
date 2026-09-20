@@ -207,7 +207,7 @@ def find_skills(
         terms = [term for term in re.split(r"\s+", text) if term]
         matches: list[dict[str, Any]] = []
         for item in list_skills(project_dir):
-            haystack = " ".join((item["name"], item["description"])).lower()
+            haystack = " ".join((item["name"], item["description"], item["content"])).lower()
             if all(term in haystack for term in terms):
                 matches.append(public_skill(item))
         return matches

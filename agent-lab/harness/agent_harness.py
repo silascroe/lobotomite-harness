@@ -31,6 +31,7 @@ from workflow import (
     save_workflow,
     transition,
 )
+from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +44,7 @@ ACTION_NAMES = {
     "run_command",
     "git_diff",
     "workflow_checkpoint",
+    "find_skills",
     "finish",
 }
 FORBIDDEN_SHELL_CHARS = set("&|;`><")
@@ -473,6 +475,7 @@ Available actions:
 {"action":"apply_patch","args":{"patch":"*** Begin Patch\\n...\\n*** End Patch"}}
 {"action":"run_command","args":{"command":"python -m unittest discover"}}
 {"action":"git_diff","args":{"max_chars":12000}}
+{"action":"find_skills","args":{"query":"browser testing","source":"local"}}
 {"action":"workflow_checkpoint","args":{"phase":"plan","summary":"short operational summary","next_action":"the next concrete step","artifacts":["docs/plan.md"]}}
 {"action":"finish","args":{"status":"success","summary":"what was completed and how it was checked"}}
 
@@ -514,6 +517,17 @@ class AgentHarness:
         self.finish_summary = ""
         self.workspace_mode = "managed" if self.project_dir == self.run_dir / "project" else "selected"
         self.workflow = new_workflow()
+        try:
+            self.skill_selection = resolve_skill_selection(self.project_dir, self.config.get("skill_overrides"))
+        except SkillError as exc:
+            raise HarnessError(str(exc)) from exc
+        self.config["skill_selection"] = public_selection(self.skill_selection)
+        self.workflow_evidence = {
+            "inspect": False,
+            "plan": False,
+            "implement": False,
+            "verify": False,
+        }
 
     @property
     def output_limit(self) -> int:
@@ -539,8 +553,17 @@ class AgentHarness:
         persona = personality_prompt(self.config)
         if persona:
             content = persona + "\n" + content
+        content += skill_prompt(self.skill_selection)
         content += extra
         return content
+
+    def skill_metadata(self) -> dict[str, Any]:
+        return public_selection(self.skill_selection)
+
+    def missing_workflow_gates(self) -> list[str]:
+        if not bool(self.config.get("require_workflow_gates", False)):
+            return []
+        return [name for name in ("inspect", "plan", "implement", "verify") if not self.workflow_evidence.get(name)]
 
     def reasoning_metadata(self) -> dict[str, Any]:
         return reasoning_settings(self.config)
@@ -585,6 +608,7 @@ class AgentHarness:
             project=str(self.project_dir),
             mode=self.workspace_mode,
             initial_files=sorted(self.initial_files),
+            skills=self.skill_metadata(),
         )
         self.logger.event("workflow_phase", source="automatic", state=self.workflow)
 
@@ -923,6 +947,13 @@ class AgentHarness:
         return {"ok": True, "diff": clip(diff, min(limit, self.output_limit)), "changed_files": [name for name in names if self.initial_files.get(name, b"") != current.get(name, b"")]}
 
     def workflow_checkpoint(self, args: dict[str, Any]) -> dict[str, Any]:
+        requested_phase = str(args.get("phase", "")).strip().lower()
+        if (
+            bool(self.config.get("require_workflow_gates", False))
+            and requested_phase == "plan"
+            and not self.workflow_evidence["inspect"]
+        ):
+            raise HarnessError("plan checkpoint requires successful project inspection first")
         try:
             next_state = transition(
                 self.workflow,
@@ -934,10 +965,21 @@ class AgentHarness:
         except WorkflowError as exc:
             raise HarnessError(str(exc)) from exc
         self.workflow = save_workflow(self.run_dir / "workflow.json", next_state)
+        if requested_phase == "plan":
+            self.workflow_evidence["plan"] = True
         self.logger.event("workflow_phase", source="model", state=self.workflow)
         return {"ok": True, "workflow": self.workflow}
 
     def record_workflow_evidence(self, action: str, result: dict[str, Any]) -> None:
+        if isinstance(result, dict) and result.get("ok"):
+            if action in {"list_files", "read_file"}:
+                self.workflow_evidence["inspect"] = True
+            elif action in {"write_file", "apply_patch"}:
+                self.workflow_evidence["implement"] = True
+                self.workflow_evidence["verify"] = False
+                self.validation_passed = False
+            elif action == "run_command" and result.get("exit_code") == 0 and self.workflow_evidence["implement"]:
+                self.workflow_evidence["verify"] = True
         next_state = observe_tool(self.workflow, action, result)
         if next_state == self.workflow:
             return
@@ -960,6 +1002,18 @@ class AgentHarness:
             result = self.git_diff(args)
         elif action == "workflow_checkpoint":
             return self.workflow_checkpoint(args)
+        elif action == "find_skills":
+            try:
+                source = str(args.get("source", "local"))
+                results = find_skills(
+                    args.get("query"),
+                    self.project_dir,
+                    source=source,
+                    allow_remote=bool(self.config.get("allow_remote_skill_search", False)),
+                )
+            except SkillError as exc:
+                raise HarnessError(str(exc)) from exc
+            return {"ok": True, "source": source, "results": results}
         else:
             raise HarnessError(f"unsupported tool action: {action}")
         self.record_workflow_evidence(action, result)
@@ -1015,6 +1069,9 @@ class AgentHarness:
             return None
         if requested_status != "success":
             return None
+        missing_gates = self.missing_workflow_gates()
+        if missing_gates:
+            return "success is not accepted yet; workflow evidence missing: " + ", ".join(missing_gates)
         missing = [
             name
             for name in self.config.get("required_files", [])
@@ -1112,6 +1169,8 @@ class AgentHarness:
             "workspace_mode": self.workspace_mode,
             "reasoning": self.reasoning_metadata(),
             "workflow": self.workflow,
+            "workflow_evidence": dict(self.workflow_evidence),
+            "skills": self.skill_metadata(),
         }
         write_json(self.run_dir / "summary.json", summary)
 
@@ -1151,7 +1210,12 @@ class AgentHarness:
                 if action == "finish":
                     issue = self.finish_issue(args)
                     if issue:
-                        self.logger.event("finish_rejected", turn=turn, reason=issue)
+                        self.logger.event(
+                            "finish_rejected",
+                            turn=turn,
+                            reason=issue,
+                            missing_gates=self.missing_workflow_gates(),
+                        )
                         correction = issue + ". Continue using the tools, then try finish again."
                         print(f"  finish rejected: {issue}")
                         continue
@@ -1233,6 +1297,7 @@ def main() -> int:
         config = dict(config)
         config["required_files"] = []
         config["require_validation"] = False
+        config["require_workflow_gates"] = False
         config.pop("evaluator", None)
     run_id = args.run_id or datetime.now().strftime("run-%Y%m%d-%H%M%S")
     ensure_run_id(run_id)
