@@ -137,7 +137,7 @@ $py = 'C:\Users\ringd\.cache\codex-runtimes\codex-primary-runtime\dependencies\p
 & $py agent-lab/harness/agent_harness.py --resume-run run-001
 ```
 
-The console exposes the same operation as `Resume run` when an interrupted record is selected. Resuming gives the worker a fresh configured turn budget while preserving the existing project and audit trail; terminal records are intentionally not restartable.
+The console exposes `Stop run` while a benchmark is active and `Resume run` when an interrupted record is selected. Stopping terminates the harness worker without deleting the project or audit trail. Resuming gives the worker a fresh configured turn budget while preserving the existing project and audit trail; terminal records are intentionally not restartable.
 
 ```powershell
 & $py agent-lab/checks/check_static_page.py agent-lab/runs/run-001/project

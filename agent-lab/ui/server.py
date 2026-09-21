@@ -1016,6 +1016,27 @@ def resume_run(run_id: str) -> dict[str, Any]:
     }
 
 
+def stop_run(run_id: str) -> dict[str, Any]:
+    run_id = validate_run_id(run_id)
+    with PROCESS_LOCK:
+        process = PROCESSES.get(run_id)
+    if process is None or process.poll() is not None:
+        state = run_state(run_id)
+        if state["status"] == "running":
+            raise ApiError("run is active but is not controlled by this server", 409)
+        return {"run_id": run_id, "status": state["status"], "stopped": False}
+    try:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    except OSError as exc:
+        raise ApiError(f"could not stop harness: {exc}", 500) from exc
+    return {"run_id": run_id, "status": "interrupted", "stopped": True}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AgentLab/0.1"
 
@@ -1128,6 +1149,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/runs/"):
                 remainder = parsed.path[len("/api/runs/") :]
                 pieces = remainder.split("/", 2)
+                if len(pieces) == 2 and pieces[1] == "stop":
+                    run_id = validate_run_id(urllib.parse.unquote(pieces[0]))
+                    return self.send_json(stop_run(run_id), 202)
                 if len(pieces) == 2 and pieces[1] == "resume":
                     run_id = validate_run_id(urllib.parse.unquote(pieces[0]))
                     return self.send_json(resume_run(run_id), 202)

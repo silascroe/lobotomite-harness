@@ -232,6 +232,43 @@ class ServerWorkflowTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status, 409)
 
+    def test_stop_run_terminates_a_live_process_and_leaves_it_interrupted(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-stop"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (run_dir / "progress.json").write_text(json.dumps({"status": "running", "turn": 2}), encoding="utf-8")
+
+        class DummyProcess:
+            stdout = None
+
+            def __init__(self):
+                self.returncode = None
+                self.terminated = False
+
+            def poll(self):
+                return self.returncode
+
+            def terminate(self):
+                self.terminated = True
+                self.returncode = 143
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -9
+
+        process = DummyProcess()
+        MODULE.PROCESSES["run-stop"] = process
+
+        result = MODULE.stop_run("run-stop")
+
+        self.assertTrue(process.terminated)
+        self.assertTrue(result["stopped"])
+        self.assertEqual(result["status"], "interrupted")
+
     def test_rehydrate_session_restores_context_and_clears_stale_busy_state(self) -> None:
         session_dir = MODULE.SESSION_DIR / "chat-restore"
         project_dir = session_dir / "project"
@@ -467,6 +504,37 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(response.status, 202)
         self.assertEqual(payload["run_id"], "run-http")
         resumer.assert_called_once_with("run-http")
+
+    def test_stop_endpoint_routes_to_the_run_stopper(self) -> None:
+        from http.client import HTTPConnection
+        import threading
+
+        http_server = MODULE.ThreadingHTTPServer(("127.0.0.1", 0), MODULE.Handler)
+        server_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            with patch.object(
+                MODULE,
+                "stop_run",
+                return_value={"run_id": "run-http", "status": "interrupted", "stopped": True},
+            ) as stopper:
+                connection = HTTPConnection("127.0.0.1", http_server.server_port)
+                connection.request(
+                    "POST",
+                    "/api/runs/run-http/stop",
+                    body="{}",
+                    headers={"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+            server_thread.join(timeout=2)
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(payload["status"], "interrupted")
+        stopper.assert_called_once_with("run-http")
 
     def test_favicon_asset_is_served(self) -> None:
         from http.client import HTTPConnection

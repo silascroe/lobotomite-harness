@@ -649,6 +649,11 @@ function renderRun(run) {
     resumeButton.hidden = run.status !== "interrupted";
     resumeButton.disabled = run.status === "running";
   }
+  const stopButton = $("stopRunButton");
+  if (stopButton) {
+    stopButton.hidden = run.status !== "running";
+    stopButton.disabled = run.status !== "running";
+  }
   renderReasoningControl(run);
   renderWorkflow(run.workflow);
   renderInspector(run);
@@ -1090,6 +1095,27 @@ async function resumeRun() {
   }
 }
 
+async function stopRun() {
+  if (!state.activeRun) return;
+  const button = $("stopRunButton");
+  if (button) button.disabled = true;
+  $("launchNote").textContent = `Stopping ${state.activeRun}...`;
+  setWorkspaceNotice(`Stopping ${state.activeRun}.`, "working");
+  try {
+    const result = await api(`/api/runs/${encodeURIComponent(state.activeRun)}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    await selectRun(result.run_id);
+    setWorkspaceNotice(`Run stopped. Its saved checkpoint is available to resume.`, "success");
+  } catch (error) {
+    if (button) button.disabled = false;
+    $("launchNote").textContent = error.message;
+    setWorkspaceNotice(`Could not stop the run: ${error.message}`, "error");
+  }
+}
+
 async function loadTasks() {
   const data = await api("/api/tasks");
   state.tasks = data.tasks || [];
@@ -1208,6 +1234,7 @@ $("chatInput").addEventListener("keydown", (event) => {
 $("sidebarToggle").addEventListener("click", toggleMobileSidebar);
 $("mobileWorkspaceButton").addEventListener("click", () => openModal("workspaceDialog", "mobileWorkspaceButton"));
 $("inspectorToggle").addEventListener("click", toggleInspector);
+$("stopRunButton").addEventListener("click", stopRun);
 $("resumeRunButton").addEventListener("click", resumeRun);
 $("runDetailsButton").addEventListener("click", () => setInspectorOpen(true));
 $("closeInspector").addEventListener("click", () => setInspectorOpen(false));
