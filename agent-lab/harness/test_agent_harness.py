@@ -786,6 +786,29 @@ stale context from an older read
         harness.dispatch("write_file", {"path": "index.html", "content": "<main>two</main>\n"})
         self.assertIn("review", harness.missing_workflow_gates())
 
+    def test_git_diff_persists_a_review_packet_with_current_change_evidence(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "review-packet-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="review packet task",
+            config={"max_file_bytes": 60000, "max_total_project_bytes": 500000},
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>new</main>\n"})
+
+        result = harness.dispatch("git_diff", {})
+        packet = MODULE.load_json(run_dir / "review.json")
+
+        self.assertEqual(result["changed_files"], ["index.html"])
+        self.assertEqual(packet["status"], "current")
+        self.assertEqual(packet["changed_files"][0]["path"], "index.html")
+        self.assertEqual(packet["changed_files"][0]["status"], "added")
+        self.assertEqual(packet["diff"], result["diff"])
+
     def test_evaluator_rejection_names_failed_checks_instead_of_dumping_the_whole_report(self) -> None:
         self.harness.run_evaluator = lambda: {
             "configured": True,

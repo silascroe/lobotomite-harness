@@ -51,6 +51,7 @@ from skills import (  # noqa: E402
     resolve_skill_selection,
 )
 from persistence import atomic_write_json  # noqa: E402
+from review import fingerprint, review_status  # noqa: E402
 from job_state import (  # noqa: E402
     JobStateError,
     complete_job,
@@ -309,6 +310,7 @@ def run_state(run_id: str) -> dict[str, Any]:
     summary = read_json(run_dir / "summary.json") or {}
     progress = read_json(run_dir / "progress.json") or {}
     workflow = load_workflow(run_dir / "workflow.json")
+    review = review_from(run_dir, project)
     with PROCESS_LOCK:
         process = PROCESSES.get(run_id)
         output = list(OUTPUTS.get(run_id, []))
@@ -337,6 +339,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "project": str(project),
         "workspace_mode": summary.get("workspace_mode") or ("managed" if project == (run_dir / "project").resolve() else "selected"),
         "workflow": workflow,
+        "review": review,
         "skills": summary.get("skills", {}),
         "model": summary.get("model", ""),
         "model_calls": summary.get("model_calls", progress.get("model_calls", 0)),
@@ -364,6 +367,7 @@ def run_summaries() -> list[dict[str, Any]]:
                 "workspace_mode": state.get("workspace_mode", summary.get("workspace_mode", "")),
                 "changed_files": summary.get("changed_files", []),
                 "workflow": state.get("workflow", {}),
+                "review": state.get("review", {}),
                 "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
                 "updated": directory.stat().st_mtime,
@@ -424,6 +428,31 @@ def project_files_from(project: Path) -> list[dict[str, Any]]:
     for path in iter_project_files(project, config):
         files.append({"path": path.relative_to(project).as_posix(), "bytes": path.stat().st_size})
     return sorted(files, key=lambda item: item["path"])
+
+
+def project_snapshot_from(project: Path) -> dict[str, bytes]:
+    if not project.is_dir():
+        return {}
+    config = read_json(CONFIG) or {}
+    snapshot: dict[str, bytes] = {}
+    for path in iter_project_files(project, config):
+        try:
+            snapshot[path.relative_to(project).as_posix()] = path.read_bytes()
+        except OSError:
+            continue
+    return snapshot
+
+
+def review_from(run_dir: Path, project: Path) -> dict[str, Any]:
+    packet = read_json(run_dir / "review.json")
+    if not packet:
+        return {"status": "not_reviewed", "changed_files": [], "diff": "", "diff_truncated": False}
+    value = dict(packet)
+    value["status"] = review_status(packet, project_snapshot_from(project))
+    value.setdefault("changed_files", [])
+    value.setdefault("diff", "")
+    value.setdefault("diff_truncated", False)
+    return value
 
 
 class InteractiveSession:
@@ -602,6 +631,7 @@ class InteractiveSession:
                 "project": str(self.project_dir),
                 "workspace_mode": self.harness.workspace_mode,
                 "workflow": self.harness.workflow,
+                "review": review_from(self.run_dir, self.project_dir),
                 "recovery": self.harness.recovery.snapshot(),
                 "skills": self.harness.skill_metadata(),
                 "skill_overrides": self.harness.config.get("skill_overrides", {}),
@@ -631,6 +661,7 @@ class InteractiveSession:
             "project": str(self.project_dir),
             "workspace_mode": self.harness.workspace_mode,
             "workflow": self.harness.workflow,
+            "review": review_from(self.run_dir, self.project_dir),
             "recovery": self.harness.recovery.snapshot(),
             "skills": self.harness.skill_metadata(),
             "conversation": conversation,

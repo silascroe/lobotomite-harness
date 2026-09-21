@@ -35,4 +35,4 @@ The reference checkout remains isolated under `.research/` for future comparison
 
 ## Result
 
-The first native version is deliberately boring in the best way: the harness owns the state, the model can report operational checkpoints, successful tools provide limited automatic evidence, and the console shows exactly that state. It is a foundation for richer review packets or approval steps later, not a claim that Agent Lab is already a full Superpowers port.
+The first native version is deliberately boring in the best way: the harness owns the state, the model can report operational checkpoints, successful tools provide limited automatic evidence, and the console shows exactly that state. The current native slice also persists a review packet with a fingerprinted diff and exposes it in the Changes inspector, so a later edit cannot masquerade as already reviewed. Approval steps, subagent orchestration, and worktree management remain deliberate future work; this is not a claim that Agent Lab is already a full Superpowers port.

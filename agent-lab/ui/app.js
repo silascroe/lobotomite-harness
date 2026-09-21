@@ -69,7 +69,7 @@ function restoreModalFocus(dialogId) {
 }
 
 function setDetailsTab(tab, { focus = false } = {}) {
-  const validTabs = ["overview", "workflow", "activity", "files"];
+  const validTabs = ["overview", "workflow", "review", "activity", "files"];
   const nextTab = validTabs.includes(tab) ? tab : "overview";
   state.detailsTab = nextTab;
   document.querySelectorAll(".details-tab").forEach((button) => {
@@ -82,6 +82,7 @@ function setDetailsTab(tab, { focus = false } = {}) {
   const panels = {
     overview: "detailsOverview",
     workflow: "detailsWorkflow",
+    review: "detailsReview",
     activity: "detailsActivity",
     files: "detailsFiles",
   };
@@ -575,6 +576,45 @@ function detailRow(label, value, className = "") {
   return `<div class="detail-row"><div class="detail-label">${escapeText(label)}</div><div class="detail-value ${className}">${value}</div></div>`;
 }
 
+function renderReview(review = state.activeRecord?.review) {
+  const value = review && typeof review === "object" ? review : {};
+  const status = ["current", "stale", "not_reviewed"].includes(value.status) ? value.status : "not_reviewed";
+  const changedFiles = Array.isArray(value.changed_files) ? value.changed_files : [];
+  const statusLabel = status === "current" ? "Current" : status === "stale" ? "Needs review" : "Not reviewed";
+  const statusElement = $("reviewStatus");
+  const summaryElement = $("reviewSummary");
+  const statsElement = $("reviewStats");
+  const filesElement = $("reviewFileList");
+  const diffElement = $("reviewDiff");
+  if (!statusElement || !summaryElement || !statsElement || !filesElement || !diffElement) return;
+  statusElement.className = `review-status ${status}`;
+  statusElement.textContent = statusLabel;
+  if (status === "current") {
+    summaryElement.textContent = changedFiles.length
+      ? `${changedFiles.length} changed file${changedFiles.length === 1 ? "" : "s"} captured in the latest review.`
+      : "The latest review found no project changes.";
+  } else if (status === "stale") {
+    summaryElement.textContent = "The project changed after this review. Run git_diff again before trusting the packet.";
+  } else {
+    summaryElement.textContent = "The harness has not captured a diff for this record yet.";
+  }
+  statsElement.innerHTML = [
+    detailRow("Files", escapeText(changedFiles.length)),
+    detailRow("Validation", value.validation?.passed ? "Passed" : value.validation?.command ? "Needs attention" : "Not recorded", "muted-value"),
+    detailRow("Evaluator", value.evaluation?.configured ? (value.evaluation.passed ? "Passed" : "Failed") : "Not configured", "muted-value"),
+  ].join("");
+  filesElement.className = changedFiles.length ? "review-file-list" : "review-file-list empty-panel";
+  filesElement.innerHTML = changedFiles.length
+    ? changedFiles.map((file) => `
+      <div class="review-file-row">
+        <span class="review-file-status ${escapeText(file.status || "modified")}">${escapeText(file.status || "changed")}</span>
+        <span class="review-file-name">${escapeText(file.path || "unknown file")}</span>
+        <span class="review-file-size">${escapeText(file.after_bytes ?? 0)} B</span>
+      </div>`).join("")
+    : '<div>No changed files.</div><small>Run a diff review after making changes.</small>';
+  diffElement.textContent = value.diff || "No diff captured.";
+}
+
 function renderInspector(record = state.activeRecord) {
   state.activeRecord = record;
   $("inspectorTitle").textContent = "Details";
@@ -626,6 +666,7 @@ function renderInspector(record = state.activeRecord) {
     detailRow("Network", "Disabled in harness", "muted-value"),
   ].join("");
   setDetailsTab(state.detailsTab);
+  renderReview(record);
 }
 
 function renderRunSurface(run) {
@@ -663,8 +704,8 @@ function renderRun(run) {
     stopButton.disabled = run.status !== "running";
   }
   renderReasoningControl(run);
-  renderWorkflow(run.workflow);
-  renderInspector(run);
+    renderWorkflow(run.workflow);
+    renderInspector(run);
   renderActivity(run.events || []);
   renderFiles(run.files || []);
   loadRuns().catch(() => {});
@@ -1271,7 +1312,7 @@ document.querySelectorAll(".details-tab").forEach((button) => {
   button.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
     event.preventDefault();
-    const tabs = ["overview", "workflow", "activity", "files"];
+    const tabs = ["overview", "workflow", "review", "activity", "files"];
     const offset = event.key === "ArrowRight" ? 1 : -1;
     const nextIndex = (tabs.indexOf(state.detailsTab) + offset + tabs.length) % tabs.length;
     setDetailsTab(tabs[nextIndex], { focus: true });

@@ -35,6 +35,7 @@ from workflow import (
 from control_loop import RecoveryController, RecoveryDecision
 from context_window import build_context
 from persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
+from review import build_review_packet, fingerprint, review_status
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 
 
@@ -602,6 +603,8 @@ class AgentHarness:
         self.validation_passed = False
         self.had_tool_error = False
         self.evaluation: dict[str, Any] | None = None
+        self.last_validation: dict[str, Any] = {}
+        self.review_packet: dict[str, Any] | None = None
         self.started_at = time.monotonic()
         self.status = "not_started"
         self.finish_summary = ""
@@ -821,6 +824,13 @@ class AgentHarness:
         harness.validation_passed = bool(progress.get("validation_passed", False))
         harness.had_tool_error = bool(progress.get("had_tool_error", False))
         harness.evaluation = progress.get("evaluation") if isinstance(progress.get("evaluation"), dict) else None
+        harness.last_validation = (
+            progress.get("last_validation")
+            if isinstance(progress.get("last_validation"), dict)
+            else summary.get("last_validation") if isinstance(summary.get("last_validation"), dict) else {}
+        )
+        review_path = run_dir / "review.json"
+        harness.review_packet = load_json(review_path) if review_path.is_file() else None
         harness.finish_summary = str(progress.get("summary") or "")
         harness.blocked_reason = str(progress.get("blocked_reason") or "")
         harness.recovery = RecoveryController.from_snapshot(progress.get("recovery") or summary.get("recovery"))
@@ -1264,7 +1274,36 @@ class AgentHarness:
             )
         diff = "".join(chunks)
         limit = int(args.get("max_chars", self.output_limit))
-        return {"ok": True, "diff": clip(diff, min(limit, self.output_limit)), "changed_files": [name for name in names if self.initial_files.get(name, b"") != current.get(name, b"")]}
+        packet = build_review_packet(
+            self.initial_files,
+            current,
+            diff,
+            validation=self.last_validation,
+            evaluation=self.evaluation,
+            workflow_evidence={**self.workflow_evidence, "review": True},
+            max_diff_chars=int(self.config.get("max_review_diff_chars", 50000)),
+        )
+        self.review_packet = packet
+        atomic_write_json(self.run_dir / "review.json", packet)
+        self.logger.event(
+            "review_packet",
+            status="current",
+            changed_files=packet["changed_files"],
+            current_fingerprint=packet["current_fingerprint"],
+            diff_truncated=packet["diff_truncated"],
+        )
+        return {
+            "ok": True,
+            "diff": clip(diff, min(limit, self.output_limit)),
+            "changed_files": [item["path"] for item in packet["changed_files"]],
+            "review": {
+                "status": "current",
+                "file": "review.json",
+                "changed_files": packet["changed_files"],
+                "current_fingerprint": packet["current_fingerprint"],
+                "diff_truncated": packet["diff_truncated"],
+            },
+        }
 
     def workflow_checkpoint(self, args: dict[str, Any]) -> dict[str, Any]:
         requested_phase = str(args.get("phase", "")).strip().lower()
@@ -1301,6 +1340,13 @@ class AgentHarness:
         return {"ok": True, "workflow": self.workflow, "late": late_plan_evidence}
 
     def record_workflow_evidence(self, action: str, result: dict[str, Any]) -> None:
+        if action == "run_command":
+            self.last_validation = {
+                "command": result.get("command"),
+                "exit_code": result.get("exit_code"),
+                "passed": result.get("ok") is True and result.get("exit_code") == 0,
+                "timed_out": bool(result.get("timed_out", False)),
+            }
         if isinstance(result, dict) and result.get("ok"):
             if action in {"list_files", "read_file"}:
                 self.workflow_evidence["inspect"] = True
@@ -1311,7 +1357,7 @@ class AgentHarness:
                 self.validation_passed = False
             elif action == "run_command" and result.get("exit_code") == 0 and self.workflow_evidence["implement"]:
                 self.workflow_evidence["verify"] = True
-            elif action == "git_diff":
+            if action == "git_diff":
                 self.workflow_evidence["review"] = True
         next_state = observe_tool(self.workflow, action, result)
         if next_state == self.workflow:
@@ -1518,6 +1564,11 @@ class AgentHarness:
                 "validation_passed": self.validation_passed,
                 "had_tool_error": self.had_tool_error,
                 "evaluation": self.evaluation,
+                "last_validation": self.last_validation,
+                "review": {
+                    "status": review_status(self.review_packet, self.snapshot_files()) if self.review_packet else "not_reviewed",
+                    "reviewed_fingerprint": self.review_packet.get("current_fingerprint") if self.review_packet else None,
+                },
                 "recovery": self.recovery.snapshot(),
                 "blocked_reason": self.blocked_reason,
                 "workflow": self.workflow,
@@ -1572,6 +1623,7 @@ class AgentHarness:
             "checkpoint": self.checkpoint,
             "resume_count": self.resume_count,
             "validation_passed": self.validation_passed,
+            "last_validation": self.last_validation,
             "evaluation": self.evaluation,
             "changed_files": changed,
             "elapsed_seconds": round(time.monotonic() - self.started_at, 2),
@@ -1581,6 +1633,14 @@ class AgentHarness:
             "context": dict(self.context_metadata),
             "workflow": self.workflow,
             "workflow_evidence": dict(self.workflow_evidence),
+            "review": {
+                "status": review_status(self.review_packet, current) if self.review_packet else "not_reviewed",
+                "current_fingerprint": fingerprint(current),
+                "reviewed_fingerprint": self.review_packet.get("current_fingerprint") if self.review_packet else None,
+                "changed_files": self.review_packet.get("changed_files", []) if self.review_packet else [],
+                "generated_at": self.review_packet.get("generated_at") if self.review_packet else None,
+                "diff_truncated": bool(self.review_packet.get("diff_truncated", False)) if self.review_packet else False,
+            },
             "skills": self.skill_metadata(),
             "recovery": self.recovery.snapshot(),
             "blocked_reason": self.blocked_reason,

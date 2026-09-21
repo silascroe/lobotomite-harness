@@ -197,6 +197,7 @@
         <div id="inspectorTabs" class="details-tabs" role="tablist" aria-label="Record details">
           <button class="details-tab active" type="button" role="tab" data-details-tab="overview" aria-selected="true" aria-controls="detailsOverview">Overview</button>
           <button class="details-tab" type="button" role="tab" data-details-tab="workflow" aria-selected="false" aria-controls="detailsWorkflow">Workflow</button>
+          <button class="details-tab" type="button" role="tab" data-details-tab="review" aria-selected="false" aria-controls="detailsReview">Changes</button>
           <button class="details-tab" type="button" role="tab" data-details-tab="activity" aria-selected="false" aria-controls="detailsActivity">Activity</button>
           <button class="details-tab" type="button" role="tab" data-details-tab="files" aria-selected="false" aria-controls="detailsFiles">Files</button>
         </div>
@@ -221,6 +222,23 @@
                 <p><strong>Next</strong><span id="workflowNext">Understand the request and inspect the project.</span></p>
               </div>
             </div>
+          </section>
+
+          <section id="detailsReview" class="details-panel" role="tabpanel" hidden>
+            <div class="review-header">
+              <div>
+                <small>Change review</small>
+                <h3>Project changes</h3>
+              </div>
+              <span id="reviewStatus" class="review-status">Not reviewed</span>
+            </div>
+            <p id="reviewSummary" class="review-summary">The harness has not captured a diff for this record yet.</p>
+            <div id="reviewStats" class="review-stats"></div>
+            <div id="reviewFileList" class="review-file-list empty-panel">
+              <div>No changed files.</div>
+              <small>Run a diff review after making changes.</small>
+            </div>
+            <pre id="reviewDiff" class="review-diff">No diff captured.</pre>
           </section>
 
           <section id="detailsActivity" class="details-panel" role="tabpanel" hidden>

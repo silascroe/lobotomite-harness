@@ -171,6 +171,34 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["workflow"]["phase"], "plan")
         self.assertEqual(state["workflow"]["next_action"], "Implement the first task.")
 
+    def test_run_state_exposes_a_review_packet_and_marks_it_stale_after_changes(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-review"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (project_dir / "index.html").write_text("<main>one</main>\n", encoding="utf-8")
+        current_bytes = (project_dir / "index.html").read_bytes()
+        packet = {
+            "version": 1,
+            "status": "current",
+            "generated_at": "2026-09-21T01:00:00+00:00",
+            "baseline_fingerprint": "baseline",
+            "current_fingerprint": MODULE.fingerprint({"index.html": current_bytes}),
+            "changed_files": [{"path": "index.html", "status": "added", "before_bytes": 0, "after_bytes": len(current_bytes)}],
+            "diff": "+<main>one</main>\n",
+            "diff_truncated": False,
+        }
+        (run_dir / "review.json").write_text(json.dumps(packet), encoding="utf-8")
+
+        state = MODULE.run_state("run-review")
+        self.assertEqual(state["review"]["status"], "current")
+        self.assertEqual(state["review"]["changed_files"][0]["path"], "index.html")
+
+        (project_dir / "index.html").write_text("<main>two</main>\n", encoding="utf-8")
+        stale = MODULE.run_state("run-review")
+        self.assertEqual(stale["review"]["status"], "stale")
+
     def test_run_state_reports_a_stale_running_progress_snapshot_as_interrupted(self) -> None:
         run_dir = MODULE.RUNS_DIR / "run-interrupted"
         project_dir = run_dir / "project"

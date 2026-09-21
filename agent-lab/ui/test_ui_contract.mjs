@@ -56,6 +56,16 @@ test("workflow and retry contracts remain intact", () => {
   assert.match(css, /\.job-recovery/);
 });
 
+test("durable review evidence has a visible inspector surface", () => {
+  assert.match(html, /data-details-tab="review"/);
+  assert.match(html, /id="detailsReview"/);
+  assert.match(html, /id="reviewDiff"/);
+  assert.match(app, /function renderReview\(/);
+  assert.match(app, /activeRecord\?\.review/);
+  assert.match(app, /value\.status/);
+  assert.match(css, /\.review-diff/);
+});
+
 test("recovery events have readable activity copy", () => {
   assert.match(app, /case "recovery_retry"/);
   assert.match(app, /case "recovery_duplicate_action"/);

@@ -99,6 +99,10 @@ The current snapshot is written to the harness-owned `workflow.json` beside the 
 
 The harness accepts a late explicit `plan` checkpoint after automatic evidence has advanced the visible phase, but keeps the current phase and records a `workflow_late_evidence` event. That is deliberately honest about a small model recovering its process without making the state machine a paper shredder.
 
+### Durable change review
+
+Every successful `git_diff` creates a durable `review.json` beside the run or chat record. It contains a deterministic project fingerprint, added/modified/deleted file records, the captured diff, the last validation/evaluator evidence, and the workflow evidence that existed when the review was made. Later edits make the packet visibly stale, so a green review cannot quietly survive a new mutation. The Details drawer exposes the same packet in its Changes tab; it is the harness's review surface, not a second UI-only interpretation of the transcript.
+
 The Superpowers checkout under `.research/superpowers-upstream` is reference material only. It is not imported, executed, or required to run Agent Lab. See `docs/research/superpowers-reference-review.md` for the boundary and the design decisions this native v1 keeps or leaves out.
 
 ### Native skills and workflow gates

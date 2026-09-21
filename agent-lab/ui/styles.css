@@ -823,6 +823,50 @@ summary {
 .workflow-copy p:last-child { display: grid; grid-template-columns: 38px 1fr; gap: 8px; margin: 0; }
 .workflow-copy strong { color: var(--paper); font-family: var(--ui-font); font-size: 10px; }
 
+.review-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--line);
+}
+.review-header small { color: var(--slate-dim); font: 9px/1 var(--mono-font); }
+.review-header h3 { margin: 5px 0 0; font-family: var(--ui-font); font-size: 18px; }
+.review-status { flex: none; color: var(--slate); font-family: var(--ui-font); font-size: 10px; }
+.review-status.current { color: var(--cyan); }
+.review-status.stale { color: var(--amber); }
+.review-summary { margin: 14px 0; color: var(--slate); font-size: 11px; line-height: 1.5; }
+.review-stats { display: grid; gap: 0; margin-bottom: 15px; }
+.review-file-list { display: grid; gap: 4px; padding-top: 6px; }
+.review-file-list.empty-panel { gap: 5px; padding: 22px 8px; text-align: center; }
+.review-file-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.review-file-status { color: var(--slate-dim); font: 8px/1 var(--mono-font); text-transform: lowercase; }
+.review-file-status.added { color: var(--cyan); }
+.review-file-status.modified { color: var(--iris-strong); }
+.review-file-status.deleted { color: var(--danger); }
+.review-file-name { min-width: 0; overflow-wrap: anywhere; color: var(--paper); font: 9px/1.45 var(--mono-font); }
+.review-file-size { color: var(--slate-dim); font: 8px/1 var(--mono-font); }
+.review-diff {
+  max-width: 100%;
+  margin: 18px 0 0;
+  padding: 13px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 65%, var(--steel));
+  color: color-mix(in srgb, var(--paper) 82%, var(--slate));
+  font: 9px/1.55 var(--mono-font);
+  white-space: pre;
+}
+
 .panel-caption { color: var(--paper); font-family: var(--ui-font); font-size: 11px; }
 .activity-list,
 .file-list { display: grid; gap: 4px; padding-top: 12px; }
