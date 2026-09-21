@@ -361,7 +361,8 @@ function eventCopy(event) {
     case "run_created": return data.mode === "selected" ? "Run attached to the selected project folder" : "Run started in a managed project folder";
     case "session_ready": return data.mode === "selected" ? "Conversation attached to the selected project folder" : "Conversation opened with a managed project folder";
     case "session_rehydrated": return "Conversation restored from disk";
-    case "job_interrupted": return "Turn interrupted; waiting for your retry";
+   case "job_interrupted": return "Turn interrupted; waiting for your retry";
+    case "job_stop_requested": return "Turn stopped by the user; waiting for retry";
     case "job_retry_requested": return `Retry started (attempt ${data.job?.attempt || "next"})`;
     case "job_progress": return `Worker checkpoint: ${data.action || "progress"}`;
     case "recovery_retry": {
@@ -421,7 +422,7 @@ function eventClass(event) {
     const phase = event.data?.state?.phase || event.data?.workflow?.phase;
     return phase === "blocked" ? "error" : phase === "complete" ? "success" : "tool";
   }
-  if (["harness_error", "finish_rejected", "turn_limit", "interactive_step_limit", "job_interrupted", "recovery_exhausted"].includes(event.event)) return "error";
+  if (["harness_error", "finish_rejected", "turn_limit", "interactive_step_limit", "job_interrupted", "job_stop_requested", "recovery_exhausted"].includes(event.event)) return "error";
   if (["recovery_retry", "recovery_duplicate_action", "workflow_late_evidence", "context_compacted"].includes(event.event)) return "tool";
   if (event.event === "tool_result") return "tool";
   return "";
@@ -518,16 +519,22 @@ function isRecoverableJob(session) {
 }
 
 function renderJobRecovery(session) {
+  const stop = $("stopJobButton");
   const button = $("retryJobButton");
   const note = $("chatNote");
   const send = $("sendButton");
   if (!button || !note || !send) return;
   const recoverable = isRecoverableJob(session);
+  const busy = Boolean(session?.busy);
+  if (stop) {
+    stop.hidden = !busy;
+    stop.disabled = !busy;
+  }
   button.hidden = !recoverable;
   button.disabled = false;
   button.textContent = session?.job?.status === "failed" ? "Retry failed turn" : "Resume interrupted turn";
   send.disabled = Boolean(session?.busy || recoverable);
-  if (session?.busy) {
+  if (busy) {
     note.textContent = "The model is working...";
   } else if (recoverable) {
     note.textContent = "This turn stopped before finishing. Retry it to continue from the saved checkpoint.";
@@ -1021,6 +1028,24 @@ async function retryJob() {
   }
 }
 
+async function stopJob() {
+  if (!state.activeSession || !state.activeRecord?.busy) return;
+  const button = $("stopJobButton");
+  if (button) button.disabled = true;
+  $("chatNote").textContent = "Stopping the current turn...";
+  try {
+    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    renderSession(session);
+  } catch (error) {
+    if (button) button.disabled = false;
+    $("chatNote").textContent = error.message;
+  }
+}
+
 async function changeReasoningLevel(event) {
   const nextLevel = event.target.value;
   const previousLevel = state.activeRecord?.reasoning?.level || state.reasoningLevel || "standard";
@@ -1185,6 +1210,7 @@ $("emptyNewRunButton").addEventListener("click", () => openModal("runDialog", "e
 $("workspaceDialogTrigger").addEventListener("click", () => openModal("workspaceDialog", "workspaceDialogTrigger"));
 $("runButton").addEventListener("click", startRun);
 $("sendButton").addEventListener("click", sendMessage);
+$("stopJobButton").addEventListener("click", stopJob);
 $("retryJobButton").addEventListener("click", retryJob);
 $("reasoningLevel").addEventListener("change", changeReasoningLevel);
 $("workspacePath").addEventListener("input", updateWorkspaceSummary);

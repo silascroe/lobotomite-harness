@@ -691,6 +691,17 @@ class InteractiveSession:
         self.save_meta()
         self._start_worker(content, self.job["job_id"], append_user=False)
 
+    def stop(self) -> None:
+        with self.lock:
+            if not self.busy or self.job.get("status") != "running":
+                raise ApiError("there is no active turn to stop", 409)
+            self.job = mark_interrupted(self.job, reason="Stopped by the user before the turn finished.")
+            self.status = "interrupted"
+            self.last_error = self.job["error"]
+            self.busy = False
+            self.harness.logger.event("job_stop_requested", job=self.job)
+        self.save_meta()
+
     def _worker_is_current(self, job_id: str) -> bool:
         with self.lock:
             return self.job.get("job_id") == job_id and self.job.get("status") == "running"
@@ -1211,6 +1222,14 @@ class Handler(BaseHTTPRequestHandler):
                     if session is None:
                         raise ApiError("session not found", 404)
                     session.retry()
+                    return self.send_json(session.state(), 202)
+                if len(pieces) == 2 and pieces[1] == "stop":
+                    session_id = validate_run_id(urllib.parse.unquote(pieces[0]))
+                    with SESSION_LOCK:
+                        session = SESSIONS.get(session_id)
+                    if session is None:
+                        raise ApiError("session not found", 404)
+                    session.stop()
                     return self.send_json(session.state(), 202)
                 if len(pieces) == 2 and pieces[1] == "messages":
                     session_id = validate_run_id(urllib.parse.unquote(pieces[0]))

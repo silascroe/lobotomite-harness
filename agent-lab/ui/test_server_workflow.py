@@ -418,6 +418,24 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["job"]["attempt"], 2)
         self.assertEqual(len(state["conversation"]), 1)
 
+    def test_stop_marks_an_interactive_job_interrupted_and_rejects_late_completion(self) -> None:
+        project = Path(self.temp_dir.name) / "project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-stop", project_path=str(project))
+        session.job = MODULE.new_job("Stop this turn.", job_id="job-stop", now="2026-09-20T01:00:00+00:00")
+        session.status = "thinking"
+        session.busy = True
+
+        session.stop()
+        session._finish_worker("job-stop", error=None)
+        state = session.state()
+
+        self.assertEqual(state["status"], "interrupted")
+        self.assertFalse(state["busy"])
+        self.assertEqual(state["job"]["status"], "interrupted")
+        self.assertIn("Stopped by the user", state["job"]["error"])
+        self.assertTrue(any(event["event"] == "job_stop_requested" for event in state["events"]))
+
     def test_interrupted_job_rejects_a_new_message_until_retried(self) -> None:
         project = Path(self.temp_dir.name) / "project"
         project.mkdir()
@@ -507,6 +525,40 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(response.status, 202)
         self.assertEqual(payload["status"], "thinking")
         self.assertEqual(payload["job"]["attempt"], 2)
+
+    def test_stop_endpoint_marks_an_active_session_interrupted(self) -> None:
+        project = Path(self.temp_dir.name) / "project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-stop-endpoint", project_path=str(project))
+        session.job = MODULE.new_job("Stop this.", job_id="job-stop-endpoint", now="2026-09-20T01:00:00+00:00")
+        session.status = "thinking"
+        session.busy = True
+        MODULE.SESSIONS[session.session_id] = session
+
+        from http.client import HTTPConnection
+        import threading
+
+        http_server = MODULE.ThreadingHTTPServer(("127.0.0.1", 0), MODULE.Handler)
+        server_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            connection = HTTPConnection("127.0.0.1", http_server.server_port)
+            connection.request(
+                "POST",
+                "/api/sessions/chat-stop-endpoint/stop",
+                body="{}",
+                headers={"Content-Type": "application/json"},
+            )
+            response = connection.getresponse()
+            payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+            server_thread.join(timeout=2)
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(payload["status"], "interrupted")
+        self.assertEqual(payload["job"]["status"], "interrupted")
 
     def test_resume_endpoint_routes_to_the_run_resumer(self) -> None:
         from http.client import HTTPConnection
