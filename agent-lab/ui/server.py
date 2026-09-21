@@ -89,6 +89,7 @@ Response shapes:
 {"action":"list_files","args":{"path":".","max_depth":3}}
 {"action":"read_file","args":{"path":"relative/path","max_chars":12000}}
 {"action":"write_file","args":{"path":"relative/path","content":"complete UTF-8 file contents"}}
+{"action":"delete_file","args":{"path":"relative/path"}}
 {"action":"replace_text","args":{"path":"relative/path","old_text":"exact text to find","new_text":"replacement text","expected_replacements":1}}
 {"action":"apply_patch","args":{"patch":"*** Begin Patch\\n*** Update File: styles.css\\n@@\\n-old line\\n+new line\\n*** End Patch"}}
 {"action":"run_command","args":{"command":"node --check app.js"}}

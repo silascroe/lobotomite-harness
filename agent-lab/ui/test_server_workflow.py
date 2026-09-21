@@ -64,6 +64,7 @@ class ServerWorkflowTests(unittest.TestCase):
     def test_interactive_contract_exposes_exact_replace_text_action(self) -> None:
         self.assertIn("replace_text", MODULE.INTERACTIVE_ACTIONS)
         self.assertIn('"action":"replace_text"', MODULE.INTERACTIVE_SYSTEM_PROMPT)
+        self.assertIn('"action":"delete_file"', MODULE.INTERACTIVE_SYSTEM_PROMPT)
         self.assertIn("*** Update File:", MODULE.INTERACTIVE_SYSTEM_PROMPT)
 
     def test_skill_catalog_exposes_bundled_and_project_local_sources(self) -> None:

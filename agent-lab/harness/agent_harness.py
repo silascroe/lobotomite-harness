@@ -44,6 +44,7 @@ ACTION_NAMES = {
     "list_files",
     "read_file",
     "write_file",
+    "delete_file",
     "replace_text",
     "apply_patch",
     "run_command",
@@ -236,7 +237,7 @@ def recovery_instruction(action: str, result: dict[str, Any], *, interactive: bo
             "The patch body was incomplete. Read the target file, then retry with a complete patch ending in "
             f"*** End Patch, or use replace_text/write_file; {suffix}"
         )
-    if action in {"write_file", "replace_text", "read_file", "list_files"} and "path" in lowered:
+    if action in {"write_file", "delete_file", "replace_text", "read_file", "list_files"} and "path" in lowered:
         return (
             f"The {action} call is missing a valid args.path. Retry with args.path set to a non-empty relative "
             f"project path and include all other required fields; {suffix}"
@@ -527,6 +528,7 @@ Rules:
 - Use relative paths only. Never use '..', absolute paths, or paths outside the project.
 - Start by inspecting the project with list_files and read_file when useful.
 - Make changes with write_file, replace_text, or apply_patch. Keep edits focused.
+- Use delete_file only when the task requires removing a file; it creates a reversible backup inside the run record first.
 - Every action must include all required fields; write_file, replace_text, read_file, and list_files always need a non-empty relative args.path. Never send a content-only write_file call.
 - Prefer replace_text for a small exact edit: it requires an exact match count and keeps the original file unchanged when the count is wrong.
 - apply_patch hunks must follow a file header such as `*** Update File: styles.css`.
@@ -546,6 +548,7 @@ Available actions:
 {"action":"list_files","args":{"path":".","max_depth":3}}
 {"action":"read_file","args":{"path":"relative/path","max_chars":12000}}
 {"action":"write_file","args":{"path":"relative/path","content":"complete UTF-8 file contents"}}
+{"action":"delete_file","args":{"path":"relative/path"}}
 {"action":"replace_text","args":{"path":"relative/path","old_text":"exact text to find","new_text":"replacement text","expected_replacements":1}}
 {"action":"apply_patch","args":{"patch":"*** Begin Patch\\n*** Update File: styles.css\\n@@\\n-old line\\n+new line\\n*** End Patch"}}
 {"action":"run_command","args":{"command":"python -m unittest discover"}}
@@ -931,6 +934,41 @@ class AgentHarness:
             "created": not was_existing_file,
         }
 
+    def delete_file(self, args: dict[str, Any]) -> dict[str, Any]:
+        path = self.resolve_path(args.get("path"), allow_project_root=False)
+        if not path.is_file():
+            raise HarnessError(f"cannot delete missing file: {args.get('path')}")
+        if path.is_symlink():
+            raise HarnessError("symlinks are not allowed")
+        backup_root = (self.run_dir / "deleted-files").resolve()
+        try:
+            backup_root.relative_to(self.project_dir.resolve())
+        except ValueError:
+            pass
+        else:
+            raise HarnessError("cannot create a reversible delete backup inside the project")
+        relative_path = relative_name(path, self.project_dir)
+        backup = backup_root / Path(relative_path)
+        if backup.exists():
+            raise HarnessError(f"a delete backup already exists for: {relative_path}")
+        data = path.read_bytes()
+        atomic_write_bytes(backup, data)
+        try:
+            path.unlink()
+        except OSError:
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+            raise
+        return {
+            "ok": True,
+            "path": relative_path,
+            "bytes": len(data),
+            "deleted": True,
+            "backup": (Path("deleted-files") / Path(relative_path)).as_posix(),
+        }
+
     def replace_text(self, args: dict[str, Any]) -> dict[str, Any]:
         path = self.resolve_path(args.get("path"), allow_project_root=False)
         old_text = args.get("old_text")
@@ -1266,7 +1304,7 @@ class AgentHarness:
         if isinstance(result, dict) and result.get("ok"):
             if action in {"list_files", "read_file"}:
                 self.workflow_evidence["inspect"] = True
-            elif action in {"write_file", "replace_text", "apply_patch"}:
+            elif action in {"write_file", "delete_file", "replace_text", "apply_patch"}:
                 self.workflow_evidence["implement"] = True
                 self.workflow_evidence["verify"] = False
                 self.workflow_evidence["review"] = False
@@ -1289,6 +1327,8 @@ class AgentHarness:
             result = self.read_file(args)
         elif action == "write_file":
             result = self.write_file(args)
+        elif action == "delete_file":
+            result = self.delete_file(args)
         elif action == "replace_text":
             result = self.replace_text(args)
         elif action == "apply_patch":
@@ -1450,7 +1490,7 @@ class AgentHarness:
         if action == "list_files":
             entries = result.get("entries", [])
             print(f"  {action}: {len(entries)} entries")
-        elif action in {"write_file", "replace_text", "apply_patch"}:
+        elif action in {"write_file", "delete_file", "replace_text", "apply_patch"}:
             print(f"  {action}: {result.get('changed', result.get('path', 'done'))}")
         elif action == "run_command":
             print(f"  {action}: exit {result.get('exit_code', 'error')}")

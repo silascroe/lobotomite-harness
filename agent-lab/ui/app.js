@@ -386,7 +386,8 @@ function eventCopy(event) {
     case "tool_result": {
       const action = data.action || "tool";
       const result = data.result || {};
-      if (action === "write_file") return `Created ${result.path || "a file"}`;
+     if (action === "write_file") return `Created ${result.path || "a file"}`;
+      if (action === "delete_file") return "Deleted " + (result.path || "a file") + " (backup kept)";
       if (action === "replace_text") return `Replaced text in ${result.path || data.args?.path || "a file"}`;
       if (action === "apply_patch") return `Applied changes to ${(result.changed || []).join(", ") || "files"}`;
       if (action === "run_command") return `Ran ${data.args?.command || "a command"} → exit ${result.exit_code ?? "error"}`;

@@ -62,6 +62,7 @@ The current tools are:
 - `list_files`
 - `read_file`
 - `write_file`
+- `delete_file` (moves the original into the run record before removing it from the project)
 - `replace_text` (exact, bounded text replacement with a required match count)
 - `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header, tolerate omitted context prefixes and an omitted final end marker from small models, allow addition-only hunks to use their declared line anchor, and validate every file before the batch is written)
 - `run_command` (no shell; Python, Node, and `npm test` are allowlisted by config)

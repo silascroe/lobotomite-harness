@@ -540,6 +540,36 @@ stale context from an older read
         with self.assertRaises(MODULE.HarnessError):
             self.harness.validate_command("node hello.js; whoami")
 
+    def test_delete_file_keeps_a_reversible_run_backup_and_records_a_deletion(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "delete-run"
+        project_dir = root / "delete-project"
+        project_dir.mkdir()
+        target = project_dir / "obsolete.txt"
+        target.write_text("remove me\n", encoding="utf-8")
+        harness = MODULE.AgentHarness(
+            task="remove an obsolete file",
+            config={"max_file_bytes": 60000, "max_total_project_bytes": 500000},
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+
+        result = harness.dispatch("delete_file", {"path": "obsolete.txt"})
+
+        self.assertFalse(target.exists())
+        backup = run_dir / "deleted-files" / "obsolete.txt"
+        self.assertEqual(backup.read_text(encoding="utf-8"), "remove me\n")
+        self.assertEqual(result["backup"], "deleted-files/obsolete.txt")
+        self.assertIn("obsolete.txt", harness.git_diff({})["changed_files"])
+
+    def test_delete_file_cannot_remove_a_directory(self) -> None:
+        directory = self.project_dir / "folder"
+        directory.mkdir()
+        with self.assertRaises(MODULE.HarnessError):
+            self.harness.delete_file({"path": "folder"})
+
     def test_missing_python_launcher_falls_back_to_the_harness_interpreter(self) -> None:
         harness = MODULE.AgentHarness(
             task="run a Python check",
