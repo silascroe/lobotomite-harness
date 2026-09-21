@@ -53,6 +53,19 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertEqual(value["action"], "write_file")
         self.assertEqual(value["args"]["content"], r"\input { color: red; }")
 
+    def test_json_recovery_removes_a_stray_quote_before_the_outer_close(self) -> None:
+        malformed = r'{"action":"write_file","args":{"path":"styles.css","content":"body {}\n"}"}'
+
+        value = MODULE.extract_json_object(malformed)
+
+        self.assertEqual(value["action"], "write_file")
+        self.assertEqual(value["args"]["path"], "styles.css")
+        self.assertEqual(value["args"]["content"], "body {}\n")
+
+    def test_json_recovery_does_not_promote_a_nested_args_object_to_an_action(self) -> None:
+        with self.assertRaises(MODULE.HarnessError):
+            MODULE.extract_json_object('{"args":{"path":"styles.css"}}')
+
     def test_personality_is_added_without_replacing_protocol(self) -> None:
         prompt = self.harness.system_content()
         self.assertIn("restrained infernal workshop spirit", prompt)

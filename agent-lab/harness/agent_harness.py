@@ -401,7 +401,8 @@ def _balance_json_objects(content: str) -> str:
 
 def _repair_escaped_terminator(content: str) -> str:
     """Unescape a quote immediately before closing braces when a model escaped the terminator."""
-    return re.sub(r'\\"(?=\s*}+\s*(?:```)?\s*$)', '"', content, count=1)
+    repaired = re.sub(r'\\"(?=\s*}+\s*(?:```)?\s*$)', '"', content, count=1)
+    return re.sub(r'("\s*}\s*)"\s*}$', r'\1}', repaired, count=1)
 
 
 def _repair_json_delimiters(content: str) -> str:
@@ -479,7 +480,7 @@ def _decode_json_object(candidate: str) -> dict[str, Any] | None:
                 value, _ = decoder.raw_decode(source[index:])
             except json.JSONDecodeError:
                 continue
-            if isinstance(value, dict):
+            if isinstance(value, dict) and "action" in value:
                 return value
     return None
 
@@ -498,9 +499,9 @@ def extract_json_object(content: str) -> dict[str, Any]:
         candidate = "\n".join(lines).strip()
 
     value = _decode_json_object(candidate)
-    if value is not None:
+    if value is not None and "action" in value:
         return value
-    raise HarnessError("model response was not a JSON object")
+    raise HarnessError("model response must be a JSON action object")
 
 
 def relative_name(path: Path, root: Path) -> str:
