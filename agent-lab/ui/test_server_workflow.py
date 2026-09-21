@@ -186,6 +186,39 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["status"], "interrupted")
         self.assertEqual(state["progress"]["turn"], 4)
 
+    def test_run_state_rehydrates_persisted_worker_output(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-output"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (run_dir / "output.log").write_text("first line\nsecond line\n", encoding="utf-8")
+
+        state = MODULE.run_state("run-output")
+
+        self.assertEqual(state["output"], ["first line", "second line"])
+
+    def test_capture_process_persists_worker_output(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-capture"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = iter(["turn 1\n", "finished\r\n"])
+                self.returncode = 0
+
+            def wait(self):
+                return self.returncode
+
+        MODULE.capture_process("run-capture", DummyProcess())
+
+        self.assertEqual(
+            (run_dir / "output.log").read_text(encoding="utf-8"),
+            "turn 1\nfinished\n",
+        )
+
     def test_resume_run_launches_only_an_interrupted_record(self) -> None:
         run_dir = MODULE.RUNS_DIR / "run-resume"
         project_dir = run_dir / "project"

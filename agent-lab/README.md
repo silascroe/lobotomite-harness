@@ -75,7 +75,7 @@ Run the first benchmark from the workspace root:
 .\scripts\run-agent-lab.ps1 -RunId run-001
 ```
 
-The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config.
+The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `output.log`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config.
 
 To swap Gemma 4 sizes, stop the running llama.cpp process and start the matching file:
 
@@ -128,7 +128,7 @@ For a new benchmark, change the task file and its completion gates (`required_fi
 
 The static-page checker is deliberately outside the agent project so the model cannot edit its own grading code. The configured evaluator is also a completion gate: the harness rejects a claimed success until the checker passes.
 
-Non-interactive runs also checkpoint `transcript.json` and `progress.json` after each turn and tool observation. If the UI process is restarted before `summary.json` is written, the run is shown as interrupted with its last durable turn, call counts, workflow, and context metadata instead of being mislabeled as an empty aborted run.
+Non-interactive runs also checkpoint `transcript.json` and `progress.json` after each turn and tool observation, while the UI server appends worker stdout to `output.log`. If the UI process is restarted before `summary.json` is written, the run is shown as interrupted with its last durable turn, call counts, workflow, context metadata, and recovered raw output instead of being mislabeled as an empty aborted run.
 
 Interrupted benchmark runs are resumable. Each run keeps an immutable `initial-project/` snapshot plus `initial-snapshot.json`, restores its transcript, workflow evidence, recovery state, and last checkpoint, and can continue from the last completed turn with:
 

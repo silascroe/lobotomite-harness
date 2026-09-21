@@ -294,6 +294,14 @@ def project_files(run_id: str) -> list[dict[str, Any]]:
     return project_files_from(run_project_dir(run_id))
 
 
+def read_run_output(run_id: str) -> list[str]:
+    path = resolve_inside(RUNS_DIR, run_id) / "output.log"
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
+    except OSError:
+        return []
+
+
 def run_state(run_id: str) -> dict[str, Any]:
     run_dir = resolve_inside(RUNS_DIR, run_id)
     project = run_project_dir(run_id)
@@ -303,6 +311,8 @@ def run_state(run_id: str) -> dict[str, Any]:
     with PROCESS_LOCK:
         process = PROCESSES.get(run_id)
         output = list(OUTPUTS.get(run_id, []))
+    if not output:
+        output = read_run_output(run_id)
     if summary.get("status"):
         status = summary["status"]
     elif process is not None and process.poll() is None:
@@ -363,10 +373,26 @@ def run_summaries() -> list[dict[str, Any]]:
 
 def capture_process(run_id: str, process: subprocess.Popen[str]) -> None:
     if process.stdout is not None:
-        for line in process.stdout:
-            with PROCESS_LOCK:
-                OUTPUTS.setdefault(run_id, []).append(line.rstrip())
-                OUTPUTS[run_id] = OUTPUTS[run_id][-300:]
+        output_path = resolve_inside(RUNS_DIR, run_id) / "output.log"
+        output_file = None
+        try:
+            for line in process.stdout:
+                clean_line = line.rstrip("\r\n")
+                if output_file is None:
+                    try:
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        output_file = output_path.open("a", encoding="utf-8", newline="")
+                    except OSError:
+                        output_file = None
+                if output_file is not None:
+                    output_file.write(clean_line + "\n")
+                    output_file.flush()
+                with PROCESS_LOCK:
+                    OUTPUTS.setdefault(run_id, []).append(clean_line)
+                    OUTPUTS[run_id] = OUTPUTS[run_id][-300:]
+        finally:
+            if output_file is not None:
+                output_file.close()
     process.wait()
 
 
@@ -969,7 +995,7 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         raise ApiError(f"could not start harness: {exc}", 500) from exc
     with PROCESS_LOCK:
         PROCESSES[run_id] = process
-        OUTPUTS[run_id] = []
+        OUTPUTS[run_id] = read_run_output(run_id)
     threading.Thread(target=capture_process, args=(run_id, process), daemon=True).start()
     return {
         "run_id": run_id,
@@ -1006,7 +1032,7 @@ def resume_run(run_id: str) -> dict[str, Any]:
         raise ApiError(f"could not resume harness: {exc}", 500) from exc
     with PROCESS_LOCK:
         PROCESSES[run_id] = process
-        OUTPUTS[run_id] = []
+        OUTPUTS[run_id] = read_run_output(run_id)
     threading.Thread(target=capture_process, args=(run_id, process), daemon=True).start()
     return {
         "run_id": run_id,
