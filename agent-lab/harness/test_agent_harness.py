@@ -276,6 +276,46 @@ class HarnessUnitTests(unittest.TestCase):
             )
         self.assertEqual(harness.workflow["phase"], "plan")
 
+    def test_late_plan_checkpoint_records_evidence_without_rewinding_phase(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "late-plan-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="late plan task",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "allow_commands": ["cmd"],
+                "require_workflow_gates": True,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.dispatch("list_files", {"path": "."})
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>ok</main>\n"})
+        harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+        self.assertEqual(harness.workflow["phase"], "verify")
+        self.assertFalse(harness.workflow_evidence["plan"])
+
+        result = harness.dispatch(
+            "workflow_checkpoint",
+            {
+                "phase": "plan",
+                "summary": "The implementation was completed; the intended structure is now recorded.",
+                "next_action": "Review the generated files.",
+                "artifacts": ["docs/plan.md"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["late"])
+        self.assertEqual(result["workflow"]["phase"], "verify")
+        self.assertTrue(harness.workflow_evidence["plan"])
+        events = (run_dir / "events.jsonl").read_text(encoding="utf-8")
+        self.assertIn('"event": "workflow_late_evidence"', events)
+
     def test_failed_command_does_not_claim_verification(self) -> None:
         root = Path(self.temp_dir.name)
         run_dir = root / "command-run"
@@ -296,6 +336,83 @@ class HarnessUnitTests(unittest.TestCase):
         result = harness.dispatch("run_command", {"command": "node --check broken.js"})
         self.assertNotEqual(result["exit_code"], 0)
         self.assertEqual(harness.workflow["phase"], "implement")
+
+    def _fake_run_harness(self, responses: list[str], *, gated: bool = False) -> MODULE.AgentHarness:
+        root = Path(self.temp_dir.name)
+        run_dir = root / f"fake-run-{len(list(root.iterdir()))}"
+        project_dir = run_dir / "project"
+        config = {
+            "max_file_bytes": 60000,
+            "max_total_project_bytes": 500000,
+            "max_turns": 8,
+            "required_files": [],
+            "require_validation": False,
+            "require_workflow_gates": gated,
+        }
+        harness = MODULE.AgentHarness(
+            task="fake model task",
+            config=config,
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        response_iter = iter(responses)
+
+        def call_model() -> dict[str, object]:
+            harness.model_calls += 1
+            return {
+                "content": next(response_iter),
+                "reasoning_content": "",
+                "finish_reason": "stop",
+                "usage": {},
+            }
+
+        harness.call_model = call_model
+        return harness
+
+    def test_repeated_invalid_model_output_blocks_after_one_repair(self) -> None:
+        harness = self._fake_run_harness(["not json", "not json", "not json"])
+
+        result = harness.run()
+
+        self.assertEqual(result, 2)
+        self.assertEqual(harness.status, "blocked")
+        self.assertEqual(harness.model_calls, 2)
+        self.assertIn("recovery", MODULE.load_json(harness.run_dir / "summary.json"))
+        self.assertIn("invalid_model_action", harness.finish_summary)
+        self.assertNotIn("turn limit", harness.finish_summary)
+
+    def test_repeated_ungated_finish_blocks_without_completing_workflow(self) -> None:
+        finish = '{"action":"finish","args":{"status":"success","summary":"done"}}'
+        harness = self._fake_run_harness([finish, finish, finish], gated=True)
+
+        result = harness.run()
+
+        self.assertEqual(result, 2)
+        self.assertEqual(harness.status, "blocked")
+        self.assertEqual(harness.model_calls, 2)
+        self.assertNotEqual(harness.workflow["phase"], "complete")
+        events = (harness.run_dir / "events.jsonl").read_text(encoding="utf-8")
+        self.assertIn('"event": "recovery_exhausted"', events)
+
+    def test_duplicate_tool_action_is_not_dispatched_twice(self) -> None:
+        read = '{"action":"list_files","args":{"path":"."}}'
+        finish = '{"action":"finish","args":{"status":"success","summary":"done"}}'
+        harness = self._fake_run_harness([read, read, finish])
+        original_dispatch = harness.dispatch
+        dispatched: list[str] = []
+
+        def dispatch(action: str, args: dict[str, object]) -> dict[str, object]:
+            dispatched.append(action)
+            return original_dispatch(action, args)
+
+        harness.dispatch = dispatch
+
+        result = harness.run()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(dispatched, ["list_files"])
+        self.assertEqual(harness.status, "success")
 
 
 if __name__ == "__main__":

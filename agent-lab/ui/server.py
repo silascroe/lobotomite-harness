@@ -32,6 +32,7 @@ sys.path.insert(0, str(HARNESS.parent))
 from agent_harness import (  # noqa: E402
     AgentHarness,
     HarnessError,
+    RecoveryController,
     extract_json_object,
     json_text,
     iter_project_files,
@@ -487,6 +488,7 @@ class InteractiveSession:
             messages.insert(0, {"role": "system", "content": self.harness.system_content()})
         self.harness.messages = messages
         self.harness.workflow = load_workflow(self.run_dir / "workflow.json")
+        self.harness.recovery = RecoveryController.from_snapshot(persisted.get("recovery"))
         self.harness.initial_files = self.harness.snapshot_files()
         for name in ("model_calls", "tool_calls"):
             try:
@@ -555,6 +557,7 @@ class InteractiveSession:
                 "project": str(self.project_dir),
                 "workspace_mode": self.harness.workspace_mode,
                 "workflow": self.harness.workflow,
+                "recovery": self.harness.recovery.snapshot(),
                 "skills": self.harness.skill_metadata(),
                 "skill_overrides": self.harness.config.get("skill_overrides", {}),
                 "job": self.job,
@@ -582,6 +585,7 @@ class InteractiveSession:
             "project": str(self.project_dir),
             "workspace_mode": self.harness.workspace_mode,
             "workflow": self.harness.workflow,
+            "recovery": self.harness.recovery.snapshot(),
             "skills": self.harness.skill_metadata(),
             "conversation": conversation,
             "events": read_events_from(self.run_dir),
@@ -599,6 +603,7 @@ class InteractiveSession:
                 raise ApiError("the model is still working on the previous message", 409)
             if self.job["status"] in {"interrupted", "failed"}:
                 raise ApiError("this turn was interrupted; retry it before sending a new message", 409)
+            self.harness.recovery.reset_for_turn()
             self.busy = True
             self.status = "thinking"
             self.last_error = ""
@@ -628,6 +633,7 @@ class InteractiveSession:
                 self.job = start_attempt(self.job, job_id=job_id)
             except JobStateError as exc:
                 raise ApiError(str(exc), 409) from exc
+            self.harness.recovery.reset_for_turn()
             content = self.job["user_message"]
             if not self.job["user_message_persisted"]:
                 self.harness.messages.append({"role": "user", "content": self.harness.user_content(content)})
@@ -724,12 +730,25 @@ class InteractiveSession:
                     if action not in {"respond", "list_files", "read_file", "write_file", "apply_patch", "run_command", "git_diff", "find_skills", "workflow_checkpoint", "finish"}:
                         raise HarnessError("unknown interactive action")
                 except (HarnessError, AttributeError) as exc:
+                    error = str(exc)
+                    self.harness.logger.event("invalid_model_action", step=step, error=error, content=raw_content)
+                    decision = self.harness.recovery.record_failure("invalid_model_action", error)
+                    if decision.stop:
+                        self.harness.recovery_event("recovery_exhausted", decision, step=step)
+                        self.add_assistant_message(
+                            f"I stopped after one repair attempt because {decision.detail}. "
+                            "Send the message again if you want a fresh attempt."
+                        )
+                        self.harness.logger.event("assistant_message", content=self.conversation[-1]["content"])
+                        self._checkpoint_worker(job_id, step, "recovery_exhausted")
+                        break
+                    self.harness.recovery_event("recovery_retry", decision, step=step)
                     correction = (
-                        f"Your response was invalid: {exc}. Return one complete JSON object using the documented "
-                        "action shapes. Do not use Markdown fences, do not apologize, and balance every brace."
+                        f"Your response was invalid: {error}. This is repair attempt {decision.attempt} "
+                        f"of {decision.limit}. Return one complete JSON object using the documented action shapes. "
+                        "Do not use Markdown fences, do not apologize, and balance every brace."
                     )
-                    self.harness.logger.event("invalid_model_action", step=step, error=str(exc), content=raw_content)
-                    self._checkpoint_worker(job_id, step, "invalid_model_action")
+                    self._checkpoint_worker(job_id, step, "recovery_retry")
                     continue
 
                 correction = ""
@@ -741,6 +760,40 @@ class InteractiveSession:
                     self.harness.logger.event("assistant_message", content=reply)
                     break
 
+                duplicate = self.harness.recovery.observe_action(action, args)
+                if duplicate is not None:
+                    self.harness.recovery_event("recovery_duplicate_action", duplicate, step=step)
+                    if duplicate.stop:
+                        self.harness.recovery_event("recovery_exhausted", duplicate, step=step)
+                        self.add_assistant_message(
+                            f"I stopped after one repair attempt because {duplicate.detail}. "
+                            "Send the message again if you want a fresh attempt."
+                        )
+                        self.harness.logger.event("assistant_message", content=self.conversation[-1]["content"])
+                        self._checkpoint_worker(job_id, step, "recovery_exhausted")
+                        break
+                    self.harness.recovery_event("recovery_retry", duplicate, step=step)
+                    result = {
+                        "ok": False,
+                        "error": (
+                            f"duplicate action blocked before dispatch: {duplicate.detail}. "
+                            f"Choose a different action; repair attempt {duplicate.attempt} of {duplicate.limit}."
+                        ),
+                        "recovery": duplicate.as_dict(),
+                    }
+                    self.harness.had_tool_error = True
+                    self.harness.logger.event("tool_result", step=step, action=action, args=args, result=result)
+                    observation = {
+                        "tool": action,
+                        "result": result,
+                        "instruction": "Choose a different action and continue the user's request, then use respond.",
+                    }
+                    self.harness.messages.append(
+                        {"role": "user", "content": self.harness.user_content(json_text(observation))}
+                    )
+                    self._checkpoint_worker(job_id, step, "tool_result")
+                    continue
+
                 self.harness.tool_calls += 1
                 try:
                     result = self.harness.dispatch(action, args)
@@ -748,8 +801,28 @@ class InteractiveSession:
                     result = {"ok": False, "error": str(exc)}
                 if result.get("ok") is False:
                     self.harness.had_tool_error = True
+                    detail = f"{action}: {result.get('error') or result.get('stderr') or 'tool returned a failure'}"
+                    decision = self.harness.recovery.record_failure("tool_failure", detail)
+                    if decision.stop:
+                        self.harness.recovery_event("recovery_exhausted", decision, step=step)
+                        self.add_assistant_message(
+                            f"I stopped after one repair attempt because {decision.detail}. "
+                            "Send the message again if you want a fresh attempt."
+                        )
+                        self.harness.logger.event("assistant_message", content=self.conversation[-1]["content"])
+                        self._checkpoint_worker(job_id, step, "recovery_exhausted")
+                        break
+                    self.harness.recovery_event("recovery_retry", decision, step=step)
                 self.harness.logger.event("tool_result", step=step, action=action, args=args, result=result)
-                observation = {"tool": action, "result": result, "instruction": "Continue the user's request, then use respond."}
+                observation = {
+                    "tool": action,
+                    "result": result,
+                    "instruction": (
+                        "Continue the user's request, then use respond."
+                        if result.get("ok") is not False
+                        else "Repair the tool failure or choose a different action, then use respond."
+                    ),
+                }
                 self.harness.messages.append({"role": "user", "content": self.harness.user_content(json_text(observation))})
                 self._checkpoint_worker(job_id, step, "tool_result")
             else:

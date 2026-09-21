@@ -76,7 +76,14 @@ Run the first benchmark from the workspace root:
 
 The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `transcript.json`, `summary.json`, `task.md`, and a copy of the config.
 
-To swap models later, change `model` and `endpoint` in `agent-lab/harness/config.json` (and restart the local llama.cpp server if the new model is a different file). The harness, task, evaluator, and run format do not need to change. The same config also carries a small `personality` layer; `slight_demon` currently gives the local model a dry, faintly infernal voice without changing its tools or operating rules.
+To swap Gemma 4 sizes, stop the running llama.cpp process and start the matching file:
+
+```powershell
+.\scripts\start-gemma4-local.ps1 -ModelSize E2B
+.\scripts\start-gemma4-local.ps1 -ModelSize E4B
+```
+
+The launcher keeps E4B as its default for backwards compatibility and reports the selected size in its output. Keep `model` in `agent-lab/harness/config.json` aligned with the running size; the endpoint, harness, task, evaluator, and run format do not need to change. The same config also carries a small `personality` layer; `slight_demon` currently gives the local model a dry, faintly infernal voice without changing its tools or operating rules.
 
 The harness also exposes a model-aware reasoning selector: `off`, `low`, `standard`, `deep`, and `max`. The Agent Lab console applies the selected level to the next interactive message and to newly launched runs. Levels are translated into per-request thinking budgets and output caps; Gemma uses `enable_thinking` plus `reasoning_budget_tokens`, while Qwen also receives its `/think` or `/no_think` template marker. The selector is an abstraction, not a promise that every model supports the same native reasoning semantics.
 
@@ -85,6 +92,8 @@ The harness also exposes a model-aware reasoning selector: `off`, `low`, `standa
 Agent Lab has a small workflow layer inspired by the useful operational parts of modern coding-agent harnesses, implemented locally in `agent-lab/harness/workflow.py`. Each run and chat starts at `intake` and can move through `inspect`, `design`, `plan`, `implement`, `verify`, `review`, and `complete`; failed work stays observable and can return to `implement` for repair. A concrete blocker is represented separately as `blocked`.
 
 The current snapshot is written to the harness-owned `workflow.json` beside the run or chat transcript. The model can emit a `workflow_checkpoint` action with a short summary, next action, and relative artifact paths. Successful inspections, writes, validation commands, diffs, and finishes also create automatic evidence checkpoints. These summaries describe observable work only; they are not hidden chain-of-thought. The web console reads that same snapshot for the phase rail, Inspector, and Activity feed, so the UI is reporting the harness state rather than inventing a second status system.
+
+The harness accepts a late explicit `plan` checkpoint after automatic evidence has advanced the visible phase, but keeps the current phase and records a `workflow_late_evidence` event. That is deliberately honest about a small model recovering its process without making the state machine a paper shredder.
 
 The Superpowers checkout under `.research/superpowers-upstream` is reference material only. It is not imported, executed, or required to run Agent Lab. See `docs/research/superpowers-reference-review.md` for the boundary and the design decisions this native v1 keeps or leaves out.
 
@@ -107,6 +116,8 @@ Evaluated runs use the workflow gates by default. A successful finish must have 
 The UI server rehydrates persisted conversations at startup from each session's `session.json`, `transcript.json`, `workflow.json`, `config.json`, and workspace metadata. The conversation list therefore survives closing or restarting the PowerShell process. A session that was marked busy when the process disappeared is reopened with `busy: false`; a completed session is ready to continue, while an in-flight turn is explicitly marked interrupted for recovery. No dead worker is assumed to still exist. The transcript is restored as model context, while the shorter conversation record drives the visible chat. Malformed session records are skipped so one damaged folder cannot prevent the console from starting.
 
 Interactive turns also have a durable job record. A turn that was running when the server stopped is reopened as `interrupted`, not falsely reported as complete and not silently retried. The chat shows a `Resume interrupted turn` action; clicking it creates a new attempt from the latest saved transcript and does not duplicate the visible user message. Model responses, tool results, and worker checkpoints are saved as the turn progresses. If a model call fails, the job is marked `failed` and waits for the same explicit retry. Only the current job attempt may finalize the session, so a stale worker cannot overwrite a newer retry.
+
+The control loop also has bounded recovery. The same malformed response, rejected finish, or tool failure gets one targeted repair opportunity; a second identical failure ends a benchmark as `blocked` with the concrete reason instead of burning the rest of the turn budget. Consecutive duplicate tool calls are stopped before the second dispatch. Interactive chats receive the same protection but remain usable after showing the recovery message. The policy is persisted in run summaries and chat session metadata under `recovery`, and its decisions are recorded as `recovery_retry`, `recovery_duplicate_action`, and `recovery_exhausted` events. These controls preserve the workflow gates; they do not manufacture missing evidence.
 
 For a new benchmark, change the task file and its completion gates (`required_files`, `require_validation`, and `evaluator`) together; otherwise you would be grading a new task with the old page's ruler.
 

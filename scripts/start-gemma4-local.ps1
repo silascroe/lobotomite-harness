@@ -3,24 +3,31 @@ param(
     [int]$Port = 8080,
     [int]$Context = 8192,
     [string]$Device = 'Vulkan0',
-    [int]$ReasoningBudget = 1024
+    [int]$ReasoningBudget = 1024,
+    [ValidateSet('E2B', 'E4B')]
+    [string]$ModelSize = 'E4B'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
 $bin = Join-Path $root 'runtime\llama.cpp\b11045-vulkan\bin\llama-server.exe'
-$model = Join-Path $root 'models\Gemma4-E4B-GGUF\gemma-4-E4B_q4_0-it.gguf'
+$modelPaths = @{
+    E2B = Join-Path $root 'models\Gemma4-E2B-GGUF\gemma-4-E2B_q4_0-it.gguf'
+    E4B = Join-Path $root 'models\Gemma4-E4B-GGUF\gemma-4-E4B_q4_0-it.gguf'
+}
+$model = $modelPaths[$ModelSize]
 $runtimeDir = Split-Path -Parent $bin
-$log = Join-Path $runtimeDir 'gemma4-server.out.log'
-$errorLog = Join-Path $runtimeDir 'gemma4-server.err.log'
+$logStem = if ($ModelSize -eq 'E4B') { 'gemma4-server' } else { "gemma4-$ModelSize-server" }
+$log = Join-Path $runtimeDir "$logStem.out.log"
+$errorLog = Join-Path $runtimeDir "$logStem.err.log"
 
 if (-not (Test-Path -LiteralPath $bin)) {
     throw "llama-server.exe was not found at $bin"
 }
 
 if (-not (Test-Path -LiteralPath $model)) {
-    throw "The Gemma 4 E4B model was not found at $model"
+    throw "The Gemma 4 $ModelSize model was not found at $model"
 }
 
 $healthUri = "http://127.0.0.1:$Port/health"
@@ -61,6 +68,7 @@ $process = Start-Process `
 [pscustomobject]@{
     PID = $process.Id
     Endpoint = "http://127.0.0.1:$Port"
+    ModelSize = $ModelSize
     Model = $model
     Reasoning = "on (budget $ReasoningBudget tokens)"
     Log = $log

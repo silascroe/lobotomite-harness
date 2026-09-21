@@ -405,6 +405,68 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["job"]["status"], "completed")
         self.assertEqual(state["conversation"][-1]["content"], "Done.")
 
+    def test_interactive_duplicate_action_is_not_dispatched_twice_and_is_persisted(self) -> None:
+        project = Path(self.temp_dir.name) / "project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-duplicate", project_path=str(project))
+        session.harness.config["max_turns"] = 4
+        session.job = MODULE.new_job("Inspect the project.", job_id="job-duplicate", now="2026-09-20T01:00:00+00:00")
+        session.status = "thinking"
+        session.busy = True
+        read = json.dumps({"action": "list_files", "args": {"path": "."}})
+        respond = json.dumps({"action": "respond", "args": {"content": "I inspected it."}})
+        responses = iter([read, read, respond])
+        session.harness.call_model = lambda: {"content": next(responses), "finish_reason": "stop"}
+        original_dispatch = session.harness.dispatch
+        dispatched: list[str] = []
+
+        def dispatch(action: str, args: dict[str, object]) -> dict[str, object]:
+            dispatched.append(action)
+            return original_dispatch(action, args)
+
+        session.harness.dispatch = dispatch
+
+        session.process("Inspect the project.", "job-duplicate", append_user=True)
+        state = session.state()
+        persisted = json.loads((session.run_dir / "session.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(dispatched, ["list_files"])
+        self.assertEqual(state["status"], "ready")
+        self.assertEqual(state["job"]["status"], "completed")
+        self.assertEqual(state["conversation"][-1]["content"], "I inspected it.")
+        self.assertEqual(persisted["recovery"], state["recovery"])
+        self.assertTrue(any(event["event"] == "recovery_duplicate_action" for event in state["events"]))
+
+    def test_interactive_exhausted_recovery_is_visible_but_does_not_poison_session(self) -> None:
+        project = Path(self.temp_dir.name) / "project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-recovery-stop", project_path=str(project))
+        session.harness.config["max_turns"] = 4
+        session.job = MODULE.new_job("Do the work.", job_id="job-recovery-stop", now="2026-09-20T01:00:00+00:00")
+        session.status = "thinking"
+        session.busy = True
+        responses = iter(["not json", "not json"])
+        session.harness.call_model = lambda: {"content": next(responses), "finish_reason": "stop"}
+
+        session.process("Do the work.", "job-recovery-stop", append_user=True)
+        state = session.state()
+
+        self.assertEqual(state["status"], "ready")
+        self.assertEqual(state["job"]["status"], "completed")
+        self.assertIn("stopped after one repair", state["conversation"][-1]["content"])
+        self.assertTrue(any(event["event"] == "recovery_exhausted" for event in state["events"]))
+
+    def test_recovery_snapshot_survives_interactive_rehydration(self) -> None:
+        project = Path(self.temp_dir.name) / "project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-recovery-restore", project_path=str(project))
+        session.harness.recovery.record_failure("invalid_model_action", "bad JSON")
+        session.save_meta()
+
+        restored = MODULE.InteractiveSession.from_disk("chat-recovery-restore")
+
+        self.assertEqual(restored.state()["recovery"], session.state()["recovery"])
+
     def test_worker_failure_marks_job_failed_and_waits_for_retry(self) -> None:
         project = Path(self.temp_dir.name) / "project"
         project.mkdir()

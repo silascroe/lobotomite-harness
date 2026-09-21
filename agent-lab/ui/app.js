@@ -364,6 +364,18 @@ function eventCopy(event) {
     case "job_interrupted": return "Turn interrupted; waiting for your retry";
     case "job_retry_requested": return `Retry started (attempt ${data.job?.attempt || "next"})`;
     case "job_progress": return `Worker checkpoint: ${data.action || "progress"}`;
+    case "recovery_retry": {
+      const decision = data.decision || {};
+      return `Recovery retry ${decision.attempt || "?"}/${decision.limit || "?"}: ${decision.detail || "repairing the last failure"}`;
+    }
+    case "recovery_duplicate_action": {
+      const decision = data.decision || {};
+      return `Duplicate action stopped before dispatch: ${decision.detail || "same action repeated"}`;
+    }
+    case "recovery_exhausted": {
+      const decision = data.decision || {};
+      return `Recovery exhausted: ${decision.detail || "the same failure persisted"}`;
+    }
     case "model_response": return `Model replied${data.finish_reason ? ` (${data.finish_reason})` : ""}`;
     case "tool_result": {
       const action = data.action || "tool";
@@ -381,6 +393,10 @@ function eventCopy(event) {
       const phase = String(workflow.phase || "intake");
       return `Workflow → ${phase}${workflow.summary ? ` — ${workflow.summary}` : ""}`;
     }
+    case "workflow_late_evidence": {
+      const workflow = data.state || {};
+      return `Late workflow evidence recorded: ${data.requested_phase || "checkpoint"} (phase remains ${workflow.phase || "active"})`;
+    }
     case "finish_rejected": return `Harness rejected completion: ${data.reason || "more work is required"}`;
     case "evaluator": return `External evaluator ${data.result?.passed ? "passed" : "failed"}`;
     case "finish": return `Finished ${data.status || "run"}${data.summary ? ` — ${data.summary}` : ""}`;
@@ -397,7 +413,8 @@ function eventClass(event) {
     const phase = event.data?.state?.phase || event.data?.workflow?.phase;
     return phase === "blocked" ? "error" : phase === "complete" ? "success" : "tool";
   }
-  if (["harness_error", "finish_rejected", "turn_limit", "interactive_step_limit", "job_interrupted"].includes(event.event)) return "error";
+  if (["harness_error", "finish_rejected", "turn_limit", "interactive_step_limit", "job_interrupted", "recovery_exhausted"].includes(event.event)) return "error";
+  if (["recovery_retry", "recovery_duplicate_action", "workflow_late_evidence"].includes(event.event)) return "tool";
   if (event.event === "tool_result") return "tool";
   return "";
 }

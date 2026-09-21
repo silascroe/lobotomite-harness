@@ -1,6 +1,6 @@
 {
   "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
-  "model": "Gemma-4-E4B-Q4_0",
+  "model": "Gemma-4-E2B-Q4_0",
   "max_turns": 18,
   "max_tokens": 2048,
   "temperature": 0.6,
@@ -45,6 +45,10 @@
     "app.js"
   ],
   "require_validation": true,
+  "recovery": {
+    "max_retries_per_failure": 1,
+    "max_duplicate_action_retries": 1
+  },
   "evaluator": "agent-lab/checks/check_static_page.py",
   "allow_commands": [
     "python",

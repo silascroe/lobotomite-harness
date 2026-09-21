@@ -53,6 +53,14 @@ test("workflow and retry contracts remain intact", () => {
   assert.match(css, /\.job-recovery/);
 });
 
+test("recovery events have readable activity copy", () => {
+  assert.match(app, /case "recovery_retry"/);
+  assert.match(app, /case "recovery_duplicate_action"/);
+  assert.match(app, /case "recovery_exhausted"/);
+  assert.match(app, /case "workflow_late_evidence"/);
+  assert.match(app, /recovery_exhausted.*return "error"|return "error".*recovery_exhausted/s);
+});
+
 test("skill controls expose recorded defaults, overrides, and discovery", () => {
   assert.match(html, /id="skillSummary"/);
   assert.match(html, /id="skillOverride"/);

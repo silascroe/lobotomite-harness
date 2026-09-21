@@ -26,3 +26,4 @@ __pycache__/
 # Remote attachments and research-only upstream material
 .codex-remote-attachments/
 .research/superpowers-upstream/
+.research/agent-reference/

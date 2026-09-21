@@ -7,7 +7,10 @@ param(
 
     [int]$MaxTokens = 1200,
 
-    [int]$Port = 8080
+    [int]$Port = 8080,
+
+    [ValidateSet('E2B', 'E4B')]
+    [string]$ModelSize = 'E4B'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,7 +28,7 @@ $messages += @{
 }
 
 $body = @{
-    model = 'Gemma-4-E4B-Q4_0'
+    model = "Gemma-4-$ModelSize-Q4_0"
     messages = $messages
     temperature = 1.0
     top_p = 0.95
@@ -43,7 +46,7 @@ try {
         -Body $body
 }
 catch {
-    throw "Could not reach the local Gemma 4 server on port $Port. Run scripts\start-gemma4-local.ps1 first. Original error: $($_.Exception.Message)"
+    throw "Could not reach the local Gemma 4 $ModelSize server on port $Port. Run scripts\start-gemma4-local.ps1 -ModelSize $ModelSize first. Original error: $($_.Exception.Message)"
 }
 
 $message = $response.choices[0].message

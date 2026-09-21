@@ -31,6 +31,7 @@ from workflow import (
     save_workflow,
     transition,
 )
+from control_loop import RecoveryController, RecoveryDecision
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 
 
@@ -515,6 +516,8 @@ class AgentHarness:
         self.started_at = time.monotonic()
         self.status = "not_started"
         self.finish_summary = ""
+        self.blocked_reason = ""
+        self.recovery = RecoveryController.from_config(self.config)
         self.workspace_mode = "managed" if self.project_dir == self.run_dir / "project" else "selected"
         self.workflow = new_workflow()
         try:
@@ -954,10 +957,15 @@ class AgentHarness:
             and not self.workflow_evidence["inspect"]
         ):
             raise HarnessError("plan checkpoint requires successful project inspection first")
+        late_plan_evidence = (
+            requested_phase == "plan"
+            and not self.workflow_evidence["plan"]
+            and self.workflow["phase"] in {"implement", "verify", "review"}
+        )
         try:
             next_state = transition(
                 self.workflow,
-                args.get("phase"),
+                self.workflow["phase"] if late_plan_evidence else args.get("phase"),
                 args.get("summary"),
                 args.get("next_action"),
                 artifacts=args.get("artifacts", []),
@@ -967,8 +975,13 @@ class AgentHarness:
         self.workflow = save_workflow(self.run_dir / "workflow.json", next_state)
         if requested_phase == "plan":
             self.workflow_evidence["plan"] = True
-        self.logger.event("workflow_phase", source="model", state=self.workflow)
-        return {"ok": True, "workflow": self.workflow}
+        self.logger.event(
+            "workflow_late_evidence" if late_plan_evidence else "workflow_phase",
+            source="model",
+            requested_phase=requested_phase,
+            state=self.workflow,
+        )
+        return {"ok": True, "workflow": self.workflow, "late": late_plan_evidence}
 
     def record_workflow_evidence(self, action: str, result: dict[str, Any]) -> None:
         if isinstance(result, dict) and result.get("ok"):
@@ -1151,6 +1164,36 @@ class AgentHarness:
     def save_transcript(self) -> None:
         write_json(self.run_dir / "transcript.json", self.messages)
 
+    def recovery_event(
+        self,
+        event: str,
+        decision: RecoveryDecision,
+        *,
+        turn: int | None = None,
+        step: int | None = None,
+    ) -> None:
+        data: dict[str, Any] = {"decision": decision.as_dict(), "recovery": self.recovery.snapshot()}
+        if turn is not None:
+            data["turn"] = turn
+        if step is not None:
+            data["step"] = step
+        self.logger.event(event, **data)
+
+    def block_from_recovery(
+        self,
+        decision: RecoveryDecision,
+        *,
+        turn: int | None = None,
+        step: int | None = None,
+    ) -> None:
+        self.status = "blocked"
+        self.blocked_reason = (
+            f"recovery exhausted for {decision.category} after {decision.attempt} attempts: {decision.detail}"
+        )
+        self.finish_summary = self.blocked_reason
+        self.recovery_event("recovery_exhausted", decision, turn=turn, step=step)
+        print(f"  stopped: {self.blocked_reason}")
+
     def save_summary(self) -> None:
         current = self.snapshot_files()
         changed = sorted(name for name in set(self.initial_files) | set(current) if self.initial_files.get(name, b"") != current.get(name, b""))
@@ -1171,6 +1214,8 @@ class AgentHarness:
             "workflow": self.workflow,
             "workflow_evidence": dict(self.workflow_evidence),
             "skills": self.skill_metadata(),
+            "recovery": self.recovery.snapshot(),
+            "blocked_reason": self.blocked_reason,
         }
         write_json(self.run_dir / "summary.json", summary)
 
@@ -1198,12 +1243,20 @@ class AgentHarness:
                 except (HarnessError, AttributeError) as exc:
                     error = str(exc)
                     self.logger.event("invalid_model_action", turn=turn, error=error, content=content)
+                    decision = self.recovery.record_failure("invalid_model_action", error)
+                    if decision.stop:
+                        self.block_from_recovery(decision, turn=turn)
+                        self.save_transcript()
+                        self.save_summary()
+                        return 2
+                    self.recovery_event("recovery_retry", decision, turn=turn)
                     correction = (
-                        f"Your last response was invalid: {error}. Return exactly one complete JSON object "
-                        "using one of the documented actions. Do not use Markdown fences, do not apologize, "
-                        "and make sure every opening brace has a matching closing brace."
+                        f"Your last response was invalid: {error}. This is repair attempt {decision.attempt} "
+                        f"of {decision.limit}. Return exactly one complete JSON object using one of the documented "
+                        "actions. Do not use Markdown fences, do not apologize, and make sure every opening brace "
+                        "has a matching closing brace."
                     )
-                    print(f"  invalid model response: {error}")
+                    print(f"  invalid model response: {error} (repair attempt {decision.attempt}/{decision.limit})")
                     continue
 
                 correction = ""
@@ -1216,8 +1269,19 @@ class AgentHarness:
                             reason=issue,
                             missing_gates=self.missing_workflow_gates(),
                         )
-                        correction = issue + ". Continue using the tools, then try finish again."
-                        print(f"  finish rejected: {issue}")
+                        decision = self.recovery.record_failure("finish_rejected", issue)
+                        if decision.stop:
+                            self.block_from_recovery(decision, turn=turn)
+                            self.save_transcript()
+                            self.save_summary()
+                            return 2
+                        self.recovery_event("recovery_retry", decision, turn=turn)
+                        correction = (
+                            issue
+                            + f". This is repair attempt {decision.attempt} of {decision.limit}. "
+                            "Continue using the tools, then try finish again."
+                        )
+                        print(f"  finish rejected: {issue} (repair attempt {decision.attempt}/{decision.limit})")
                         continue
                     self.status = str(args.get("status", "success"))
                     if self.status not in {"success", "blocked"}:
@@ -1232,6 +1296,42 @@ class AgentHarness:
                     self.save_summary()
                     return 0 if self.status == "success" else 2
 
+                duplicate = self.recovery.observe_action(action, args)
+                if duplicate is not None:
+                    self.recovery_event("recovery_duplicate_action", duplicate, turn=turn)
+                    if duplicate.stop:
+                        self.block_from_recovery(duplicate, turn=turn)
+                        self.save_transcript()
+                        self.save_summary()
+                        return 2
+                    self.recovery_event("recovery_retry", duplicate, turn=turn)
+                    result = {
+                        "ok": False,
+                        "error": (
+                            f"duplicate action blocked before dispatch: {duplicate.detail}. "
+                            f"Choose a different action; repair attempt {duplicate.attempt} of {duplicate.limit}."
+                        ),
+                        "recovery": duplicate.as_dict(),
+                    }
+                    self.had_tool_error = True
+                    self.logger.event("tool_result", turn=turn, action=action, args=args, result=result)
+                    self.print_tool_result(action, result)
+                    self.messages.append(
+                        {
+                            "role": "user",
+                            "content": self.user_content(
+                                json_text(
+                                    {
+                                        "tool": action,
+                                        "result": result,
+                                        "instruction": "Choose a different action and continue the task.",
+                                    }
+                                )
+                            ),
+                        }
+                    )
+                    continue
+
                 self.tool_calls += 1
                 try:
                     result = self.dispatch(action, args)
@@ -1239,6 +1339,14 @@ class AgentHarness:
                     result = {"ok": False, "error": str(exc)}
                 if result.get("ok") is False:
                     self.had_tool_error = True
+                    detail = f"{action}: {result.get('error') or result.get('stderr') or 'tool returned a failure'}"
+                    decision = self.recovery.record_failure("tool_failure", detail)
+                    if decision.stop:
+                        self.block_from_recovery(decision, turn=turn)
+                        self.save_transcript()
+                        self.save_summary()
+                        return 2
+                    self.recovery_event("recovery_retry", decision, turn=turn)
                 if action == "run_command" and result.get("ok") and result.get("exit_code") == 0:
                     self.validation_passed = True
                 self.logger.event("tool_result", turn=turn, action=action, args=args, result=result)
@@ -1246,7 +1354,11 @@ class AgentHarness:
                 observation = {
                     "tool": action,
                     "result": result,
-                    "instruction": "Continue the task. Return exactly one JSON object for the next action.",
+                    "instruction": (
+                        "Continue the task. Return exactly one JSON object for the next action."
+                        if result.get("ok") is not False
+                        else "Repair the tool failure or choose a different action, then continue the task."
+                    ),
                 }
                 self.messages.append({"role": "user", "content": self.user_content(json_text(observation))})
 
