@@ -7,9 +7,11 @@ from job_state import (
     complete_job,
     fail_job,
     mark_interrupted,
+    mark_waiting_approval,
     new_job,
     normalize_job,
     start_attempt,
+    resume_approval,
     update_progress,
 )
 
@@ -67,6 +69,22 @@ class JobStateTests(unittest.TestCase):
 
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(retried["attempt"], 2)
+
+    def test_waiting_approval_round_trip_preserves_the_turn(self) -> None:
+        running = new_job("Change the page", job_id="job-1", now="2026-09-20T01:00:00+00:00")
+        waiting = mark_waiting_approval(running, step=3, now="2026-09-20T01:01:00+00:00")
+        resumed = resume_approval(waiting, now="2026-09-20T01:02:00+00:00")
+
+        self.assertEqual(waiting["status"], "waiting_approval")
+        self.assertEqual(waiting["current_step"], 3)
+        self.assertEqual(waiting["last_action"], "approval_requested")
+        self.assertEqual(resumed["status"], "running")
+        self.assertEqual(resumed["current_step"], 3)
+
+    def test_approval_transitions_reject_wrong_source_status(self) -> None:
+        running = new_job("Change the page", job_id="job-1")
+        with self.assertRaises(JobStateError):
+            resume_approval(running)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,13 @@ from workflow import (
 from control_loop import RecoveryController, RecoveryDecision
 from context_window import build_context
 from persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
+from approval import (
+    normalize_mode,
+    new_request,
+    public_request,
+    requires_approval,
+    resolve_request,
+)
 from review import build_review_packet, fingerprint, review_status
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 
@@ -605,6 +612,11 @@ class AgentHarness:
         self.evaluation: dict[str, Any] | None = None
         self.last_validation: dict[str, Any] = {}
         self.review_packet: dict[str, Any] | None = None
+        self.approval_mode = normalize_mode(self.config.get("approval_mode", "auto"))
+        self.config["approval_mode"] = self.approval_mode
+        self.approval_record: dict[str, Any] | None = None
+        self.pending_approval: dict[str, Any] | None = None
+        self.approval_grant: dict[str, Any] | None = None
         self.started_at = time.monotonic()
         self.status = "not_started"
         self.finish_summary = ""
@@ -831,10 +843,16 @@ class AgentHarness:
         )
         review_path = run_dir / "review.json"
         harness.review_packet = load_json(review_path) if review_path.is_file() else None
+        approval_path = run_dir / "approval.json"
+        harness.approval_record = load_json(approval_path) if approval_path.is_file() else None
+        if harness.approval_record and harness.approval_record.get("status") == "pending":
+            harness.pending_approval = harness.approval_record
         harness.finish_summary = str(progress.get("summary") or "")
         harness.blocked_reason = str(progress.get("blocked_reason") or "")
         harness.recovery = RecoveryController.from_snapshot(progress.get("recovery") or summary.get("recovery"))
         harness.status = "interrupted"
+        if persisted_status == "waiting_approval" and harness.pending_approval:
+            harness.status = "waiting_approval"
         return harness
 
     def snapshot_files(self) -> dict[str, bytes]:
@@ -1365,7 +1383,53 @@ class AgentHarness:
         self.workflow = save_workflow(self.run_dir / "workflow.json", next_state)
         self.logger.event("workflow_phase", source="automatic", action=action, state=self.workflow)
 
-    def dispatch(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
+    def approval_view(self) -> dict[str, Any]:
+        if self.pending_approval is not None:
+            return public_request(self.pending_approval)
+        if self.approval_record is not None:
+            return public_request(self.approval_record)
+        return {"status": "none"}
+
+    def request_approval(
+        self,
+        action: str,
+        args: dict[str, Any],
+        *,
+        turn: int | None = None,
+        step: int | None = None,
+    ) -> dict[str, Any]:
+        if not self.requires_approval(action):
+            raise HarnessError("approval is not enabled for this action")
+        if self.pending_approval is not None:
+            raise HarnessError("another approval request is already pending")
+        request = new_request(action, args, turn=turn, step=step)
+        self.approval_record = request
+        self.pending_approval = request
+        atomic_write_json(self.run_dir / "approval.json", request)
+        self.logger.event("approval_requested", **public_request(request))
+        return request
+
+    def requires_approval(self, action: str) -> bool:
+        return requires_approval(action, self.approval_mode)
+
+    def resolve_approval(self, decision: str) -> dict[str, Any]:
+        if self.pending_approval is None:
+            raise HarnessError("there is no pending approval request")
+        resolved = resolve_request(self.pending_approval, decision)
+        self.approval_record = resolved
+        self.pending_approval = None
+        self.approval_grant = resolved if resolved.get("status") == "approved" else None
+        atomic_write_json(self.run_dir / "approval.json", resolved)
+        self.logger.event("approval_resolved", **public_request(resolved))
+        return resolved
+
+    def dispatch(self, action: str, args: dict[str, Any], *, approved: bool = False) -> dict[str, Any]:
+        if self.requires_approval(action):
+            if not approved or self.approval_grant is None:
+                raise HarnessError(f"{action} requires operator approval before dispatch")
+            if self.approval_grant.get("action") != action or self.approval_grant.get("args") != args:
+                raise HarnessError("approved action does not match the pending request")
+            self.approval_grant = None
         result: dict[str, Any]
         if action == "list_files":
             result = self.list_files(args)
@@ -1569,6 +1633,7 @@ class AgentHarness:
                     "status": review_status(self.review_packet, self.snapshot_files()) if self.review_packet else "not_reviewed",
                     "reviewed_fingerprint": self.review_packet.get("current_fingerprint") if self.review_packet else None,
                 },
+                "approval": self.approval_view(),
                 "recovery": self.recovery.snapshot(),
                 "blocked_reason": self.blocked_reason,
                 "workflow": self.workflow,
@@ -1629,6 +1694,7 @@ class AgentHarness:
             "elapsed_seconds": round(time.monotonic() - self.started_at, 2),
             "project": str(self.project_dir),
             "workspace_mode": self.workspace_mode,
+            "approval_mode": self.approval_mode,
             "reasoning": self.reasoning_metadata(),
             "context": dict(self.context_metadata),
             "workflow": self.workflow,
@@ -1641,6 +1707,7 @@ class AgentHarness:
                 "generated_at": self.review_packet.get("generated_at") if self.review_packet else None,
                 "diff_truncated": bool(self.review_packet.get("diff_truncated", False)) if self.review_packet else False,
             },
+            "approval": self.approval_view(),
             "skills": self.skill_metadata(),
             "recovery": self.recovery.snapshot(),
             "blocked_reason": self.blocked_reason,
@@ -1648,32 +1715,62 @@ class AgentHarness:
         write_json(self.run_dir / "summary.json", summary)
         self.save_progress()
 
-    def run(self, *, resume: bool = False) -> int:
+    def run(self, *, resume: bool = False, approval_decision: str | None = None) -> int:
         max_turns = int(self.config.get("max_turns", 18))
         pending_response: str | None = None
         pending_turn: int | None = None
+        forced_action: tuple[str, dict[str, Any], str] | None = None
         if resume:
             self.status = "running"
             self.finish_summary = ""
-            last_message = self.messages[-1] if self.messages else {}
-            if self.checkpoint == "model_response" and last_message.get("role") == "assistant":
-                pending_response = last_message.get("content")
-                pending_turn = self.current_turn
-            elif self.checkpoint == "model_call" and last_message.get("role") == "assistant":
-                pending_response = last_message.get("content")
-                pending_turn = self.current_turn + 1
-            start_turn = pending_turn if pending_turn is not None else self.current_turn + 1
-            end_turn = start_turn + max_turns
-            self.logger.event(
-                "run_resumed",
-                turn=self.current_turn,
-                checkpoint=self.checkpoint,
-                resume_count=self.resume_count,
-            )
-            correction = "" if pending_response is not None else "The previous worker stopped. Continue from the last saved transcript and tool result."
-            if pending_response is None:
-                self.save_progress(checkpoint="resume")
+            if approval_decision is not None and self.pending_approval is None:
+                raise HarnessError("there is no pending approval request")
+            if self.pending_approval is not None:
+                if approval_decision not in {"approve", "deny"}:
+                    self.status = "waiting_approval"
+                    self.checkpoint = "approval_wait"
+                    self.save_summary()
+                    return 3
+                pending = self.pending_approval
+                forced_action = (
+                    str(pending.get("action") or ""),
+                    dict(pending.get("args") or {}),
+                    approval_decision,
+                )
+                pending_turn = int(pending.get("turn") or self.current_turn or 1)
+                self.resolve_approval(approval_decision)
+                start_turn = pending_turn
+                end_turn = start_turn + max_turns
+                correction = ""
+                self.logger.event(
+                    "run_resumed_for_approval",
+                    turn=pending_turn,
+                    decision=approval_decision,
+                    resume_count=self.resume_count,
+                )
+                self.save_progress(turn=pending_turn, checkpoint="approval_resume")
+            else:
+                last_message = self.messages[-1] if self.messages else {}
+                if self.checkpoint == "model_response" and last_message.get("role") == "assistant":
+                    pending_response = last_message.get("content")
+                    pending_turn = self.current_turn
+                elif self.checkpoint == "model_call" and last_message.get("role") == "assistant":
+                    pending_response = last_message.get("content")
+                    pending_turn = self.current_turn + 1
+                start_turn = pending_turn if pending_turn is not None else self.current_turn + 1
+                end_turn = start_turn + max_turns
+                self.logger.event(
+                    "run_resumed",
+                    turn=self.current_turn,
+                    checkpoint=self.checkpoint,
+                    resume_count=self.resume_count,
+                )
+                correction = "" if pending_response is not None else "The previous worker stopped. Continue from the last saved transcript and tool result."
+                if pending_response is None:
+                    self.save_progress(checkpoint="resume")
         else:
+            if approval_decision is not None:
+                raise HarnessError("approval decisions only apply when resuming a run")
             self.prepare()
             self.status = "running"
             self.save_transcript()
@@ -1687,7 +1784,14 @@ class AgentHarness:
                     self.messages.append({"role": "user", "content": self.user_content(correction)})
                     self.save_transcript()
                 display_limit = max_turns if not resume else end_turn - 1
-                if pending_response is not None and turn == pending_turn:
+                approval_resolution: str | None = None
+                if forced_action is not None and turn == pending_turn:
+                    action, args, approval_resolution = forced_action
+                    forced_action = None
+                    content = json_text({"action": action, "args": args})
+                    self.current_turn = turn
+                    print(f"turn {turn}/{display_limit}: resuming {approval_resolution}d action")
+                elif pending_response is not None and turn == pending_turn:
                     print(f"turn {turn}/{display_limit}: resuming saved model response")
                     content = pending_response
                     pending_response = None
@@ -1767,7 +1871,7 @@ class AgentHarness:
                     self.save_summary()
                     return 0 if self.status == "success" else 2
 
-                duplicate = self.recovery.observe_action(action, args)
+                duplicate = None if approval_resolution is not None else self.recovery.observe_action(action, args)
                 if duplicate is not None:
                     self.recovery_event("recovery_duplicate_action", duplicate, turn=turn)
                     if duplicate.stop:
@@ -1805,12 +1909,31 @@ class AgentHarness:
                     self.save_progress(turn=turn, checkpoint="tool_result")
                     continue
 
-                self.tool_calls += 1
-                try:
-                    result = self.dispatch(action, args)
-                except HarnessError as exc:
-                    result = {"ok": False, "error": str(exc)}
-                if result.get("ok") is False:
+                if approval_resolution is None and self.requires_approval(action):
+                    self.request_approval(action, args, turn=turn)
+                    self.status = "waiting_approval"
+                    self.checkpoint = "approval_wait"
+                    print(f"  waiting for approval: {action}")
+                    self.save_transcript()
+                    self.save_summary()
+                    return 3
+
+                if approval_resolution == "deny":
+                    result = {
+                        "ok": False,
+                        "approval": "denied",
+                        "error": "operator denied this action; choose a different approach or explain the blocker",
+                    }
+                else:
+                    self.tool_calls += 1
+                    try:
+                        if approval_resolution == "approve":
+                            result = self.dispatch(action, args, approved=True)
+                        else:
+                            result = self.dispatch(action, args)
+                    except HarnessError as exc:
+                        result = {"ok": False, "error": str(exc)}
+                if result.get("ok") is False and result.get("approval") != "denied":
                     self.had_tool_error = True
                     detail = f"{action}: {result.get('error') or result.get('stderr') or 'tool returned a failure'}"
                     decision = self.recovery.record_failure("tool_failure", detail)
@@ -1861,11 +1984,13 @@ def parse_args() -> argparse.Namespace:
     task_source.add_argument("--task-file", type=Path)
     task_source.add_argument("--task-text")
     parser.add_argument("--resume-run", type=ensure_run_id, help="resume an interrupted run by its persisted run id")
+    parser.add_argument("--approval-decision", choices=("approve", "deny"), help="resolve a pending operator approval while resuming")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--run-id", type=ensure_run_id)
     parser.add_argument("--template", type=Path)
     parser.add_argument("--project-dir", type=Path, help="use this existing or newly created directory as the project workspace")
     parser.add_argument("--reasoning-level", choices=tuple(REASONING_LEVELS), help="override the configured reasoning level")
+    parser.add_argument("--approval-mode", choices=("auto", "confirm"), help="whether mutating tools need operator approval")
     parser.add_argument("--skill-overrides-json", help="JSON object containing per-task enabled and disabled skill names")
     parser.add_argument("--no-gates", action="store_true", help="disable task-specific completion requirements and evaluator")
     return parser.parse_args()
@@ -1885,7 +2010,7 @@ def main() -> int:
         print(f"resuming run: {args.resume_run}")
         print(f"project: {harness.project_dir}")
         try:
-            return harness.run(resume=True)
+            return harness.run(resume=True, approval_decision=args.approval_decision)
         except HarnessError as exc:
             print(f"harness error: {exc}", file=sys.stderr)
             return 1
@@ -1902,6 +2027,9 @@ def main() -> int:
     if args.reasoning_level is not None:
         config = dict(config)
         config["reasoning_level"] = normalize_reasoning_level(args.reasoning_level)
+    if args.approval_mode is not None:
+        config = dict(config)
+        config["approval_mode"] = args.approval_mode
     if args.skill_overrides_json is not None:
         try:
             skill_overrides = json.loads(args.skill_overrides_json)

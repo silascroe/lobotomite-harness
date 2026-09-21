@@ -41,6 +41,14 @@
           </select>
           <small id="reasoningHint">1,024 thinking tokens</small>
         </label>
+        <label class="approval-control" for="approvalMode">
+          <span>Tools</span>
+          <select id="approvalMode" title="Choose whether mutating tools need your approval">
+            <option value="auto" selected>Auto</option>
+            <option value="confirm">Confirm</option>
+          </select>
+          <small id="approvalHint">Autonomous tools</small>
+        </label>
         <div id="runStatus" class="status-badge idle" role="status">
           <span class="status-dot" aria-hidden="true"></span>
           <span>Ready</span>
@@ -135,6 +143,11 @@
           <div class="composer-dock">
             <button id="stopJobButton" class="job-recovery" type="button" hidden>Stop current turn</button>
             <button id="retryJobButton" class="job-recovery" type="button" hidden>Retry turn</button>
+            <div id="approvalJob" class="job-recovery approval-job" hidden>
+              <span id="approvalJobCopy">The agent wants to change the project.</span>
+              <button id="approveJobButton" class="secondary-button" type="button">Approve</button>
+              <button id="denyJobButton" class="text-button" type="button">Deny</button>
+            </div>
             <section class="chat-composer" aria-label="Message composer">
               <textarea id="chatInput" rows="3" placeholder="Ask something or give it a job..."></textarea>
               <div class="composer-footer">
@@ -168,6 +181,8 @@
               </div>
               <div class="record-actions">
                 <button id="stopRunButton" class="secondary-button" type="button" hidden>Stop run</button>
+                <button id="approveRunButton" class="secondary-button approval-action" type="button" hidden>Approve action</button>
+                <button id="denyRunButton" class="text-button approval-action" type="button" hidden>Deny</button>
                 <button id="resumeRunButton" class="secondary-button" type="button" hidden>Resume run</button>
                 <button id="runDetailsButton" class="secondary-button" type="button">Open details</button>
               </div>

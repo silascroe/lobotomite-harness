@@ -6,6 +6,7 @@ const state = {
   selectedFile: null,
   sessionFilter: "",
   reasoningLevel: "standard",
+  approvalMode: "auto",
   reasoningOptions: [],
   skills: [],
   skillDefaults: [],
@@ -193,6 +194,20 @@ function renderReasoningControl(record = state.activeRecord) {
   select.title = reasoning.description || option.description;
 }
 
+function normalizeApprovalMode(value) {
+  return value === "confirm" ? "confirm" : "auto";
+}
+
+function renderApprovalControl(record = state.activeRecord) {
+  const select = $("approvalMode");
+  const hint = $("approvalHint");
+  if (!select || !hint) return;
+  const mode = normalizeApprovalMode(record?.approval_mode || state.approvalMode);
+  state.approvalMode = mode;
+  select.value = mode;
+  hint.textContent = mode === "confirm" ? "Ask before edits" : "Autonomous tools";
+}
+
 async function api(path, options = {}) {
   let response;
   try {
@@ -327,7 +342,7 @@ function updateWorkspaceSummary() {
 }
 
 function statusLabel(status) {
-  const labels = { ready: "Ready", idle: "Idle", thinking: "Thinking", running: "Running", success: "Success", complete: "Complete", blocked: "Blocked", error: "Error", interrupted: "Interrupted", failed: "Failed" };
+  const labels = { ready: "Ready", idle: "Idle", thinking: "Thinking", running: "Running", success: "Success", complete: "Complete", blocked: "Blocked", error: "Error", interrupted: "Interrupted", failed: "Failed", waiting_approval: "Approval needed" };
   return labels[status] || status || "Ready";
 }
 
@@ -524,9 +539,13 @@ function renderJobRecovery(session) {
   const button = $("retryJobButton");
   const note = $("chatNote");
   const send = $("sendButton");
+  const approvalJob = $("approvalJob");
+  const approvalCopy = $("approvalJobCopy");
   if (!button || !note || !send) return;
   const recoverable = isRecoverableJob(session);
   const busy = Boolean(session?.busy);
+  const approval = session?.approval || {};
+  const waitingApproval = approval.status === "pending";
   if (stop) {
     stop.hidden = !busy;
     stop.disabled = !busy;
@@ -534,11 +553,20 @@ function renderJobRecovery(session) {
   button.hidden = !recoverable;
   button.disabled = false;
   button.textContent = session?.job?.status === "failed" ? "Retry failed turn" : "Resume interrupted turn";
-  send.disabled = Boolean(session?.busy || recoverable);
+  if (approvalJob) approvalJob.hidden = !waitingApproval;
+  if (approvalCopy && waitingApproval) {
+    const summary = approval.summary || {};
+    approvalCopy.textContent = summary.action === "run_command"
+      ? `The agent wants to run: ${summary.command || "a command"}`
+      : `The agent wants to change ${summary.path || "the project"}.`;
+  }
+  send.disabled = Boolean(session?.busy || recoverable || waitingApproval);
   if (busy) {
     note.textContent = "The model is working...";
   } else if (recoverable) {
     note.textContent = "This turn stopped before finishing. Retry it to continue from the saved checkpoint.";
+  } else if (waitingApproval) {
+    note.textContent = "The agent is waiting for your approval before changing the project.";
   } else {
     note.textContent = "Shift + Enter for new line";
   }
@@ -646,11 +674,13 @@ function renderInspector(record = state.activeRecord) {
   const skills = record?.skills || {};
   const skillNames = Array.isArray(skills.resolved) ? skills.resolved.map((item) => item.name).filter(Boolean) : [];
   renderReasoningControl(record);
+  renderApprovalControl(record);
   $("inspectorContent").innerHTML = [
     detailRow(state.activeKind === "run" ? "Run ID" : "Session ID", escapeText(id), "mono-value"),
     detailRow("Status", `<span class="status-inline"><span class="status-dot" aria-hidden="true"></span>${escapeText(statusLabel(status))}</span>`),
     detailRow("Model", escapeText(model)),
     detailRow("Reasoning", escapeText(reasoningLabel)),
+    detailRow("Tool approvals", escapeText(normalizeApprovalMode(record?.approval_mode || state.approvalMode) === "confirm" ? "Ask before edits" : "Autonomous")),
     detailRow("Thinking budget", escapeText(reasoningBudget), "muted-value"),
     detailRow("Response cap", `${formatTokenCount(reasoningMax)} tokens`, "muted-value"),
     detailRow("Context window", escapeText(contextLabel), "muted-value"),
@@ -703,9 +733,21 @@ function renderRun(run) {
     stopButton.hidden = run.status !== "running";
     stopButton.disabled = run.status !== "running";
   }
+  const waitingApproval = run.status === "waiting_approval" && run.approval?.status === "pending";
+  const approveButton = $("approveRunButton");
+  const denyButton = $("denyRunButton");
+  if (approveButton) {
+    approveButton.hidden = !waitingApproval;
+    approveButton.disabled = !waitingApproval;
+  }
+  if (denyButton) {
+    denyButton.hidden = !waitingApproval;
+    denyButton.disabled = !waitingApproval;
+  }
   renderReasoningControl(run);
-    renderWorkflow(run.workflow);
-    renderInspector(run);
+  renderApprovalControl(run);
+  renderWorkflow(run.workflow);
+  renderInspector(run);
   renderActivity(run.events || []);
   renderFiles(run.files || []);
   loadRuns().catch(() => {});
@@ -726,6 +768,7 @@ function renderSession(session) {
   $("rawOutput").textContent = (session.events || []).map((event) => eventCopy(event)).join("\n") || "No process output yet.";
   setStatus(session.busy ? "thinking" : session.status);
   renderReasoningControl(session);
+  renderApprovalControl(session);
   renderWorkflow(session.workflow);
   renderInspector(session);
   renderChat(session);
@@ -925,7 +968,7 @@ async function createSession({ announce = false, openProject = false } = {}) {
     const session = await api("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reasoning_level: state.reasoningLevel, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
+      body: JSON.stringify({ reasoning_level: state.reasoningLevel, approval_mode: state.approvalMode, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
     });
     renderSession(session);
     await loadSessionsListOnly();
@@ -1034,7 +1077,7 @@ async function sendMessage() {
   if (!content) return;
   if (!state.activeSession) await createSession();
   if (!state.activeSession) return;
-  if (isRecoverableJob(state.activeRecord)) return;
+  if (isRecoverableJob(state.activeRecord) || state.activeRecord?.job?.status === "waiting_approval") return;
   $("sendButton").disabled = true;
   $("chatInput").value = "";
   try {
@@ -1066,6 +1109,53 @@ async function retryJob() {
   } catch (error) {
     button.disabled = false;
     $("chatNote").textContent = error.message;
+  }
+}
+
+async function changeApprovalMode(event) {
+  const nextMode = normalizeApprovalMode(event.target.value);
+  const previousMode = normalizeApprovalMode(state.activeRecord?.approval_mode || state.approvalMode);
+  if (state.activeKind === "run") {
+    renderApprovalControl({ approval_mode: previousMode });
+    setWorkspaceNotice("Tool approvals are fixed for a run. Choose the mode before starting the next one.", "error");
+    return;
+  }
+  state.approvalMode = nextMode;
+  renderApprovalControl({ approval_mode: nextMode });
+  if (state.activeKind !== "session" || !state.activeSession) return;
+  try {
+    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approval_mode: nextMode }),
+    });
+    renderSession(session);
+    setWorkspaceNotice(nextMode === "confirm" ? "The agent will ask before changing the project." : "The agent can use approved tools autonomously.", "success");
+  } catch (error) {
+    state.approvalMode = previousMode;
+    renderApprovalControl({ approval_mode: previousMode });
+    $("chatNote").textContent = error.message;
+    setWorkspaceNotice(`Could not change tool approvals: ${error.message}`, "error");
+  }
+}
+
+async function resolveJobApproval(decision) {
+  if (!state.activeSession) return;
+  const buttons = [$("approveJobButton"), $("denyJobButton")].filter(Boolean);
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision }),
+    });
+    renderSession(session);
+    setWorkspaceNotice(decision === "approve" ? "Change approved. The agent is continuing." : "Change denied. The agent is adapting.", "working");
+    startSessionPolling();
+  } catch (error) {
+    buttons.forEach((button) => { button.disabled = false; });
+    $("chatNote").textContent = error.message;
+    setWorkspaceNotice(`Could not resolve approval: ${error.message}`, "error");
   }
 }
 
@@ -1124,7 +1214,7 @@ async function startRun() {
     const result = await api("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_text: taskText, gated, reasoning_level: state.reasoningLevel, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
+      body: JSON.stringify({ task_text: taskText, gated, reasoning_level: state.reasoningLevel, approval_mode: state.approvalMode, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
     });
     state.activeKind = "run";
     state.activeRun = result.run_id;
@@ -1180,6 +1270,26 @@ async function stopRun() {
     if (button) button.disabled = false;
     $("launchNote").textContent = error.message;
     setWorkspaceNotice(`Could not stop the run: ${error.message}`, "error");
+  }
+}
+
+async function resolveRunApproval(decision) {
+  if (!state.activeRun) return;
+  const buttons = [$("approveRunButton"), $("denyRunButton")].filter(Boolean);
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    const result = await api(`/api/runs/${encodeURIComponent(state.activeRun)}/approval`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision }),
+    });
+    await selectRun(result.run_id);
+    setWorkspaceNotice(decision === "approve" ? "Change approved. The run is continuing." : "Change denied. The run is adapting.", "working");
+    startRunPolling();
+  } catch (error) {
+    buttons.forEach((button) => { button.disabled = false; });
+    $("launchNote").textContent = error.message;
+    setWorkspaceNotice(`Could not resolve approval: ${error.message}`, "error");
   }
 }
 
@@ -1254,6 +1364,9 @@ $("sendButton").addEventListener("click", sendMessage);
 $("stopJobButton").addEventListener("click", stopJob);
 $("retryJobButton").addEventListener("click", retryJob);
 $("reasoningLevel").addEventListener("change", changeReasoningLevel);
+$("approvalMode").addEventListener("change", changeApprovalMode);
+$("approveJobButton").addEventListener("click", () => resolveJobApproval("approve"));
+$("denyJobButton").addEventListener("click", () => resolveJobApproval("deny"));
 $("workspacePath").addEventListener("input", updateWorkspaceSummary);
 $("projectSelect").addEventListener("change", selectProject);
 $("createProjectButton").addEventListener("click", createProject);
@@ -1304,6 +1417,8 @@ $("mobileWorkspaceButton").addEventListener("click", () => openModal("workspaceD
 $("inspectorToggle").addEventListener("click", toggleInspector);
 $("stopRunButton").addEventListener("click", stopRun);
 $("resumeRunButton").addEventListener("click", resumeRun);
+$("approveRunButton").addEventListener("click", () => resolveRunApproval("approve"));
+$("denyRunButton").addEventListener("click", () => resolveRunApproval("deny"));
 $("runDetailsButton").addEventListener("click", () => setInspectorOpen(true));
 $("closeInspector").addEventListener("click", () => setInspectorOpen(false));
 $("detailsBackdrop").addEventListener("click", () => setInspectorOpen(false));

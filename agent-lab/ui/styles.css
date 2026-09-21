@@ -108,6 +108,7 @@ summary {
 .brand,
 .mobile-project-button,
 .reasoning-control,
+.approval-control,
 .status-badge,
 .header-button {
   display: flex;
@@ -193,7 +194,15 @@ summary {
   font-size: 11px;
 }
 
-.reasoning-control select {
+.approval-control {
+  gap: 8px;
+  color: var(--slate);
+  font-family: var(--ui-font);
+  font-size: 11px;
+}
+
+.reasoning-control select,
+.approval-control select {
   height: 32px;
   padding: 0 28px 0 10px;
   border: 1px solid var(--line);
@@ -203,7 +212,8 @@ summary {
   font-weight: 650;
 }
 
-.reasoning-control small { color: var(--slate-dim); font-family: var(--mono-font); font-size: 9px; }
+.reasoning-control small,
+.approval-control small { color: var(--slate-dim); font-family: var(--mono-font); font-size: 9px; }
 
 .status-badge {
   min-width: 82px;
@@ -225,6 +235,7 @@ summary {
 .status-badge.failed .status-dot,
 .status-badge.interrupted .status-dot { background: var(--danger); }
 .status-badge.blocked .status-dot { background: var(--amber); }
+.status-badge.waiting_approval .status-dot { background: var(--amber); animation: pulse 1.3s ease-in-out infinite; }
 
 .header-button,
 .icon-button,
@@ -660,6 +671,14 @@ summary {
   font-family: var(--ui-font);
   font-weight: 650;
 }
+.approval-job {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  text-align: left;
+}
+.approval-job span { flex: 1; min-width: 0; }
 
 .run-surface { overflow-y: auto; }
 .surface-empty { min-height: 100%; padding: 40px 24px; }
@@ -1136,9 +1155,12 @@ dialog::backdrop { background: rgba(4, 6, 10, .72); backdrop-filter: blur(3px); 
   .header-actions { gap: 6px; padding: 0 8px 0 0; }
   .reasoning-control > span,
   .reasoning-control small,
+  .approval-control > span,
+  .approval-control small,
   .status-badge span:last-child,
   .header-button span:last-child { display: none; }
-  .reasoning-control select { width: 88px; height: 36px; padding-left: 8px; }
+  .reasoning-control select,
+  .approval-control select { width: 88px; height: 36px; padding-left: 8px; }
   .status-badge { min-width: 36px; width: 36px; height: 36px; padding: 0; }
   .header-button { width: 36px; height: 36px; justify-content: center; padding: 0; }
 

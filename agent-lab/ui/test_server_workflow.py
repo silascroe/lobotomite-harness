@@ -61,6 +61,42 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertTrue((session.run_dir / "workflow.json").is_file())
         self.assertIn("context", state)
 
+    def test_interactive_confirm_mode_pauses_with_a_public_approval_record(self) -> None:
+        project = Path(self.temp_dir.name) / "approval-project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-approval", project_path=str(project), approval_mode="confirm")
+        session.harness.call_model = lambda: {
+            "content": '{"action":"write_file","args":{"path":"index.html","content":"<main>approved</main>\\n"}}',
+            "reasoning_content": "",
+            "finish_reason": "stop",
+            "usage": {},
+        }
+        session.conversation.append({"role": "user", "content": "Create the page."})
+        session.job = MODULE.new_job("Create the page.", job_id="job-approval")
+        session.busy = True
+        session.status = "thinking"
+
+        session.process("Create the page.", "job-approval")
+        state = session.state()
+
+        self.assertEqual(state["status"], "waiting_approval")
+        self.assertFalse(state["busy"])
+        self.assertEqual(state["job"]["status"], "waiting_approval")
+        self.assertEqual(state["approval"]["action"], "write_file")
+        self.assertNotIn("args", state["approval"])
+        self.assertFalse((project / "index.html").exists())
+
+    def test_interactive_approval_mode_survives_session_restore(self) -> None:
+        project = Path(self.temp_dir.name) / "approval-restore-project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-approval-restore", project_path=str(project))
+        session.set_approval_mode("confirm")
+
+        restored = MODULE.InteractiveSession.from_disk("chat-approval-restore")
+
+        self.assertEqual(restored.state()["approval_mode"], "confirm")
+        self.assertEqual(json.loads((session.run_dir / "config.json").read_text(encoding="utf-8"))["approval_mode"], "confirm")
+
     def test_interactive_contract_exposes_exact_replace_text_action(self) -> None:
         self.assertIn("replace_text", MODULE.INTERACTIVE_ACTIONS)
         self.assertIn('"action":"replace_text"', MODULE.INTERACTIVE_SYSTEM_PROMPT)
@@ -214,6 +250,39 @@ class ServerWorkflowTests(unittest.TestCase):
 
         self.assertEqual(state["status"], "interrupted")
         self.assertEqual(state["progress"]["turn"], 4)
+
+    def test_run_state_exposes_waiting_approval_without_mislabeling_it_as_an_error(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-approval"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (run_dir / "progress.json").write_text(json.dumps({"status": "waiting_approval", "turn": 2}), encoding="utf-8")
+        (run_dir / "approval.json").write_text(
+            json.dumps({"status": "pending", "action": "write_file", "summary": {"action": "write_file", "path": "index.html"}, "turn": 2}),
+            encoding="utf-8",
+        )
+
+        state = MODULE.run_state("run-approval")
+
+        self.assertEqual(state["status"], "waiting_approval")
+        self.assertEqual(state["approval"]["action"], "write_file")
+
+    def test_resume_run_requires_a_decision_for_waiting_approval(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-approval-resume"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (run_dir / "progress.json").write_text(json.dumps({"status": "waiting_approval", "turn": 2}), encoding="utf-8")
+        (run_dir / "approval.json").write_text(
+            json.dumps({"status": "pending", "action": "write_file", "args": {"path": "index.html", "content": "x"}}),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(MODULE.ApiError) as raised:
+            MODULE.resume_run("run-approval-resume")
+        self.assertEqual(raised.exception.status, 409)
 
     def test_run_state_rehydrates_persisted_worker_output(self) -> None:
         run_dir = MODULE.RUNS_DIR / "run-output"

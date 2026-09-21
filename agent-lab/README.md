@@ -103,6 +103,10 @@ The harness accepts a late explicit `plan` checkpoint after automatic evidence h
 
 Every successful `git_diff` creates a durable `review.json` beside the run or chat record. It contains a deterministic project fingerprint, added/modified/deleted file records, the captured diff, the last validation/evaluator evidence, and the workflow evidence that existed when the review was made. Later edits make the packet visibly stale, so a green review cannot quietly survive a new mutation. The Details drawer exposes the same packet in its Changes tab; it is the harness's review surface, not a second UI-only interpretation of the transcript.
 
+### Optional operator approvals
+
+Tool use defaults to `auto`, but the console's Tools selector can switch a chat or new run to `confirm`. In that mode, reads remain automatic while project mutations (`write_file`, `delete_file`, `replace_text`, `apply_patch`, and `run_command`) create a durable `approval.json` request and pause with `waiting_approval`. The UI shows a redacted action summary; the exact arguments stay in the run record so approval resumes the same action without asking the model to invent it again. Denial becomes an explicit tool observation, allowing the model to adapt. The decision and final action remain in the audit trail. The CLI supports the same flow with `--approval-mode confirm` and `--approval-decision approve|deny`; `auto` remains the unattended default.
+
 The Superpowers checkout under `.research/superpowers-upstream` is reference material only. It is not imported, executed, or required to run Agent Lab. See `docs/research/superpowers-reference-review.md` for the boundary and the design decisions this native v1 keeps or leaves out.
 
 ### Native skills and workflow gates

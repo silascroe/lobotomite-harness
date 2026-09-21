@@ -41,6 +41,7 @@ from agent_harness import (  # noqa: E402
     recovery_instruction,
     reasoning_options,
 )
+from approval import normalize_mode, public_request  # noqa: E402
 from skills import (  # noqa: E402
     DEFAULT_SKILL_NAMES,
     SkillError,
@@ -59,8 +60,10 @@ from job_state import (  # noqa: E402
     idle_job,
     mark_interrupted,
     mark_user_message_persisted,
+    mark_waiting_approval,
     new_job,
     normalize_job,
+    resume_approval,
     start_attempt,
     update_progress,
 )
@@ -309,8 +312,10 @@ def run_state(run_id: str) -> dict[str, Any]:
     project = run_project_dir(run_id)
     summary = read_json(run_dir / "summary.json") or {}
     progress = read_json(run_dir / "progress.json") or {}
+    saved_config = read_json(run_dir / "config.json") or {}
     workflow = load_workflow(run_dir / "workflow.json")
     review = review_from(run_dir, project)
+    approval = approval_from(run_dir)
     with PROCESS_LOCK:
         process = PROCESSES.get(run_id)
         output = list(OUTPUTS.get(run_id, []))
@@ -322,7 +327,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         status = "running"
     elif progress.get("status") == "running":
         status = "interrupted"
-    elif progress.get("status") in {"success", "blocked", "error"}:
+    elif progress.get("status") in {"success", "blocked", "error", "waiting_approval"}:
         status = progress["status"]
     elif process is not None:
         status = "error" if process.returncode else "complete"
@@ -338,8 +343,10 @@ def run_state(run_id: str) -> dict[str, Any]:
         "files": project_files(run_id),
         "project": str(project),
         "workspace_mode": summary.get("workspace_mode") or ("managed" if project == (run_dir / "project").resolve() else "selected"),
+        "approval_mode": normalize_mode(summary.get("approval_mode") or saved_config.get("approval_mode", "auto")),
         "workflow": workflow,
         "review": review,
+        "approval": approval,
         "skills": summary.get("skills", {}),
         "model": summary.get("model", ""),
         "model_calls": summary.get("model_calls", progress.get("model_calls", 0)),
@@ -365,9 +372,11 @@ def run_summaries() -> list[dict[str, Any]]:
                 "model": summary.get("model", ""),
                 "project": state.get("project", summary.get("project", "")),
                 "workspace_mode": state.get("workspace_mode", summary.get("workspace_mode", "")),
+                "approval_mode": state.get("approval_mode", summary.get("approval_mode", "auto")),
                 "changed_files": summary.get("changed_files", []),
                 "workflow": state.get("workflow", {}),
                 "review": state.get("review", {}),
+                "approval": state.get("approval", {}),
                 "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
                 "updated": directory.stat().st_mtime,
@@ -455,6 +464,11 @@ def review_from(run_dir: Path, project: Path) -> dict[str, Any]:
     return value
 
 
+def approval_from(run_dir: Path) -> dict[str, Any]:
+    record = read_json(run_dir / "approval.json")
+    return public_request(record) if record else {"status": "none"}
+
+
 class InteractiveSession:
     def __init__(
         self,
@@ -464,6 +478,7 @@ class InteractiveSession:
         skill_overrides: Any = None,
         *,
         resume: bool = False,
+        approval_mode: str | None = None,
     ) -> None:
         self.session_id = session_id
         self.run_dir = SESSION_DIR / session_id
@@ -480,11 +495,17 @@ class InteractiveSession:
             persisted_reasoning = persisted.get("reasoning") if isinstance(persisted, dict) else None
             if isinstance(persisted_reasoning, dict) and persisted_reasoning.get("level"):
                 config["reasoning_level"] = persisted_reasoning["level"]
+        if resume and approval_mode is None and isinstance(persisted, dict):
+            persisted_approval_mode = persisted.get("approval_mode")
+            if persisted_approval_mode:
+                config["approval_mode"] = normalize_mode(persisted_approval_mode)
         if reasoning_level is not None:
             try:
                 config["reasoning_level"] = normalize_reasoning_level(reasoning_level)
             except ValueError as exc:
                 raise ApiError(str(exc)) from exc
+        if approval_mode is not None:
+            config["approval_mode"] = normalize_mode(approval_mode)
         if resume and skill_overrides is None and isinstance(persisted, dict):
             skill_overrides = persisted.get("skill_overrides")
         if resume and skill_overrides is None:
@@ -562,6 +583,11 @@ class InteractiveSession:
             self.harness.context_metadata = dict(persisted_context)
         self.harness.workflow = load_workflow(self.run_dir / "workflow.json")
         self.harness.recovery = RecoveryController.from_snapshot(persisted.get("recovery"))
+        persisted_approval = read_json(self.run_dir / "approval.json")
+        if persisted_approval:
+            self.harness.approval_record = persisted_approval
+            if persisted_approval.get("status") == "pending":
+                self.harness.pending_approval = persisted_approval
         self.harness.initial_files = self.harness.snapshot_files()
         for name in ("model_calls", "tool_calls"):
             try:
@@ -598,6 +624,9 @@ class InteractiveSession:
         elif self.job["status"] == "failed":
             self.status = "error"
             self.last_error = self.job["error"]
+        elif self.job["status"] == "waiting_approval":
+            self.status = "waiting_approval"
+            self.last_error = ""
         else:
             self.status = "ready"
             self.last_error = ""
@@ -630,8 +659,10 @@ class InteractiveSession:
                 "tool_calls": self.harness.tool_calls,
                 "project": str(self.project_dir),
                 "workspace_mode": self.harness.workspace_mode,
+                "approval_mode": self.harness.approval_mode,
                 "workflow": self.harness.workflow,
                 "review": review_from(self.run_dir, self.project_dir),
+                "approval": self.harness.approval_view(),
                 "recovery": self.harness.recovery.snapshot(),
                 "skills": self.harness.skill_metadata(),
                 "skill_overrides": self.harness.config.get("skill_overrides", {}),
@@ -639,6 +670,7 @@ class InteractiveSession:
                 "conversation": self.conversation,
             }
         atomic_write_json(self.run_dir / "session.json", value)
+        atomic_write_json(self.run_dir / "config.json", self.harness.config)
         self.harness.save_transcript()
 
     def state(self) -> dict[str, Any]:
@@ -660,8 +692,10 @@ class InteractiveSession:
             "tool_calls": self.harness.tool_calls,
             "project": str(self.project_dir),
             "workspace_mode": self.harness.workspace_mode,
+            "approval_mode": self.harness.approval_mode,
             "workflow": self.harness.workflow,
             "review": review_from(self.run_dir, self.project_dir),
+            "approval": self.harness.approval_view(),
             "recovery": self.harness.recovery.snapshot(),
             "skills": self.harness.skill_metadata(),
             "conversation": conversation,
@@ -680,6 +714,8 @@ class InteractiveSession:
                 raise ApiError("the model is still working on the previous message", 409)
             if self.job["status"] in {"interrupted", "failed"}:
                 raise ApiError("this turn was interrupted; retry it before sending a new message", 409)
+            if self.job["status"] == "waiting_approval":
+                raise ApiError("this turn is waiting for an approval decision", 409)
             self.harness.recovery.reset_for_turn()
             self.busy = True
             self.status = "thinking"
@@ -689,10 +725,16 @@ class InteractiveSession:
         self.save_meta()
         self._start_worker(content, self.job["job_id"])
 
-    def _start_worker(self, content: str, job_id: str, append_user: bool = True) -> None:
+    def _start_worker(
+        self,
+        content: str,
+        job_id: str,
+        append_user: bool = True,
+        approval_decision: str | None = None,
+    ) -> None:
         worker = threading.Thread(
             target=self.process,
-            args=(content, job_id, append_user),
+            args=(content, job_id, append_user, approval_decision),
             daemon=True,
             name=f"agent-lab-{self.session_id}-{job_id}",
         )
@@ -732,6 +774,26 @@ class InteractiveSession:
             self.busy = False
             self.harness.logger.event("job_stop_requested", job=self.job)
         self.save_meta()
+
+    def resolve_approval(self, decision: str) -> None:
+        if not isinstance(decision, str) or decision not in {"approve", "deny"}:
+            raise ApiError("approval decision must be approve or deny", 400)
+        with self.lock:
+            if self.busy or self.job.get("status") != "waiting_approval":
+                raise ApiError("there is no pending approval request", 409)
+            if self.harness.pending_approval is None:
+                raise ApiError("the approval request is missing", 409)
+            try:
+                self.job = resume_approval(self.job)
+            except JobStateError as exc:
+                raise ApiError(str(exc), 409) from exc
+            content = self.job["user_message"]
+            self.busy = True
+            self.status = "thinking"
+            self.last_error = ""
+            self.harness.logger.event("job_approval_decision", decision=decision, job=self.job)
+        self.save_meta()
+        self._start_worker(content, self.job["job_id"], append_user=False, approval_decision=decision)
 
     def _worker_is_current(self, job_id: str) -> bool:
         with self.lock:
@@ -780,11 +842,29 @@ class InteractiveSession:
             self.harness.logger.event("settings_updated", reasoning_level=normalized)
         self.save_meta()
 
+    def set_approval_mode(self, value: Any) -> None:
+        normalized = normalize_mode(value)
+        with self.lock:
+            if self.busy:
+                raise ApiError("wait for the current message to finish before changing tool approvals", 409)
+            if self.harness.pending_approval is not None:
+                raise ApiError("resolve the pending approval before changing tool approvals", 409)
+            self.harness.approval_mode = normalized
+            self.harness.config["approval_mode"] = normalized
+            self.harness.logger.event("settings_updated", approval_mode=normalized)
+        self.save_meta()
+
     def add_assistant_message(self, content: str) -> None:
         with self.lock:
             self.conversation.append({"role": "assistant", "content": content})
 
-    def process(self, content: str, job_id: str, append_user: bool = True) -> None:
+    def process(
+        self,
+        content: str,
+        job_id: str,
+        append_user: bool = True,
+        approval_decision: str | None = None,
+    ) -> None:
         failure: str | None = None
         try:
             if not self._worker_is_current(job_id):
@@ -797,18 +877,41 @@ class InteractiveSession:
                 self.save_meta()
             max_steps = int(self.harness.config.get("max_turns", 12))
             correction = ""
-            for step in range(1, max_steps + 1):
-                if not self._checkpoint_worker(job_id, step, "model_call"):
-                    return
-                if correction:
-                    self.harness.messages.append({"role": "user", "content": self.harness.user_content(correction)})
-                response = self.harness.call_model()
-                if not self._worker_is_current(job_id):
-                    return
-                self.harness.logger.event("model_response", step=step, **response)
-                raw_content = response.get("content", "")
-                self.harness.messages.append({"role": "assistant", "content": raw_content})
-                self._checkpoint_worker(job_id, step, "model_response")
+            forced_action: tuple[str, dict[str, Any], str] | None = None
+            start_step = 1
+            if approval_decision is not None:
+                if approval_decision not in {"approve", "deny"}:
+                    raise HarnessError("approval decision must be approve or deny")
+                pending = self.harness.pending_approval
+                if pending is None:
+                    raise HarnessError("the approval request is missing")
+                forced_action = (
+                    str(pending.get("action") or ""),
+                    dict(pending.get("args") or {}),
+                    approval_decision,
+                )
+                start_step = max(1, int(self.job.get("current_step", 1) or 1))
+                self.harness.resolve_approval(approval_decision)
+            for step in range(start_step, max_steps + 1):
+                approval_resolution: str | None = None
+                if forced_action is not None and step == start_step:
+                    if not self._checkpoint_worker(job_id, step, "approval_resume"):
+                        return
+                    action, forced_args, approval_resolution = forced_action
+                    forced_action = None
+                    raw_content = json_text({"action": action, "args": forced_args})
+                else:
+                    if not self._checkpoint_worker(job_id, step, "model_call"):
+                        return
+                    if correction:
+                        self.harness.messages.append({"role": "user", "content": self.harness.user_content(correction)})
+                    response = self.harness.call_model()
+                    if not self._worker_is_current(job_id):
+                        return
+                    self.harness.logger.event("model_response", step=step, **response)
+                    raw_content = response.get("content", "")
+                    self.harness.messages.append({"role": "assistant", "content": raw_content})
+                    self._checkpoint_worker(job_id, step, "model_response")
                 try:
                     parsed = extract_json_object(raw_content)
                     action = parsed.get("action")
@@ -848,7 +951,7 @@ class InteractiveSession:
                     self.harness.logger.event("assistant_message", content=reply)
                     break
 
-                duplicate = self.harness.recovery.observe_action(action, args)
+                duplicate = None if approval_resolution is not None else self.harness.recovery.observe_action(action, args)
                 if duplicate is not None:
                     self.harness.recovery_event("recovery_duplicate_action", duplicate, step=step)
                     if duplicate.stop:
@@ -882,12 +985,33 @@ class InteractiveSession:
                     self._checkpoint_worker(job_id, step, "tool_result")
                     continue
 
-                self.harness.tool_calls += 1
-                try:
-                    result = self.harness.dispatch(action, args)
-                except HarnessError as exc:
-                    result = {"ok": False, "error": str(exc)}
-                if result.get("ok") is False:
+                if approval_resolution is None and self.harness.requires_approval(action):
+                    self.harness.request_approval(action, args, step=step)
+                    with self.lock:
+                        if self.job.get("job_id") == job_id and self.job.get("status") == "running":
+                            self.job = mark_waiting_approval(self.job, step=step)
+                            self.status = "waiting_approval"
+                            self.busy = False
+                    self.harness.logger.event("job_waiting_approval", job=self.job)
+                    self.save_meta()
+                    return
+
+                if approval_resolution == "deny":
+                    result = {
+                        "ok": False,
+                        "approval": "denied",
+                        "error": "operator denied this action; choose a different approach or explain the blocker",
+                    }
+                else:
+                    self.harness.tool_calls += 1
+                    try:
+                        if approval_resolution == "approve":
+                            result = self.harness.dispatch(action, args, approved=True)
+                        else:
+                            result = self.harness.dispatch(action, args)
+                    except HarnessError as exc:
+                        result = {"ok": False, "error": str(exc)}
+                if result.get("ok") is False and result.get("approval") != "denied":
                     self.harness.had_tool_error = True
                     detail = f"{action}: {result.get('error') or result.get('stderr') or 'tool returned a failure'}"
                     decision = self.harness.recovery.record_failure("tool_failure", detail)
@@ -953,7 +1077,12 @@ def restore_sessions() -> list[str]:
     return restored
 
 
-def create_session(reasoning_level: Any = None, project_path: Any = None, skill_overrides: Any = None) -> InteractiveSession:
+def create_session(
+    reasoning_level: Any = None,
+    project_path: Any = None,
+    skill_overrides: Any = None,
+    approval_mode: Any = None,
+) -> InteractiveSession:
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     try:
         session = InteractiveSession(
@@ -961,6 +1090,7 @@ def create_session(reasoning_level: Any = None, project_path: Any = None, skill_
             reasoning_level=reasoning_level,
             project_path=project_path,
             skill_overrides=skill_overrides,
+            approval_mode=normalize_mode(approval_mode),
         )
     except HarnessError as exc:
         raise ApiError(str(exc), 413) from exc
@@ -990,6 +1120,7 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         raise ApiError("task is too long")
     run_id = choose_run_id(payload.get("run_id"))
     gated = bool(payload.get("gated", False))
+    approval_mode = normalize_mode(payload.get("approval_mode", "auto"))
     reasoning_level = payload.get("reasoning_level")
     if reasoning_level is not None:
         try:
@@ -1021,6 +1152,7 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         command.extend(["--reasoning-level", reasoning_level])
     if skill_overrides is not None:
         command.extend(["--skill-overrides-json", json.dumps(skill_overrides, ensure_ascii=False)])
+    command.extend(["--approval-mode", approval_mode])
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         process = subprocess.Popen(
@@ -1045,19 +1177,28 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         "status": "running",
         "project": str(project_path),
         "skills": public_selection(skill_selection),
+        "approval_mode": approval_mode,
     }
 
 
-def resume_run(run_id: str) -> dict[str, Any]:
+def resume_run(run_id: str, approval_decision: str | None = None) -> dict[str, Any]:
     run_id = validate_run_id(run_id)
     state = run_state(run_id)
-    if state["status"] != "interrupted":
-        raise ApiError("only interrupted runs can be resumed", 409)
+    if state["status"] not in {"interrupted", "waiting_approval"}:
+        raise ApiError("only interrupted or approval-paused runs can be resumed", 409)
+    if state["status"] == "waiting_approval" and (
+        not isinstance(approval_decision, str) or approval_decision not in {"approve", "deny"}
+    ):
+        raise ApiError("an approval decision is required for this run", 409)
+    if state["status"] == "interrupted" and approval_decision is not None:
+        raise ApiError("this run has no pending approval request", 409)
     with PROCESS_LOCK:
         existing = PROCESSES.get(run_id)
         if existing is not None and existing.poll() is None:
             raise ApiError("run is already active", 409)
     command = [sys.executable, str(HARNESS), "--resume-run", run_id]
+    if approval_decision is not None:
+        command.extend(["--approval-decision", approval_decision])
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         process = subprocess.Popen(
@@ -1082,6 +1223,7 @@ def resume_run(run_id: str) -> dict[str, Any]:
         "status": "running",
         "project": state.get("project", ""),
         "resumed": True,
+        "approval_decision": approval_decision,
     }
 
 
@@ -1218,6 +1360,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path.startswith("/api/runs/"):
                 remainder = parsed.path[len("/api/runs/") :]
                 pieces = remainder.split("/", 2)
+                if len(pieces) == 2 and pieces[1] == "approval":
+                    run_id = validate_run_id(urllib.parse.unquote(pieces[0]))
+                    return self.send_json(resume_run(run_id, payload.get("decision")), 202)
                 if len(pieces) == 2 and pieces[1] == "stop":
                     run_id = validate_run_id(urllib.parse.unquote(pieces[0]))
                     return self.send_json(stop_run(run_id), 202)
@@ -1233,6 +1378,7 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("reasoning_level"),
                     payload.get("project_path"),
                     payload.get("skill_overrides"),
+                    payload.get("approval_mode"),
                 )
                 return self.send_json(session.state(), 201)
             if parsed.path.startswith("/api/sessions/"):
@@ -1244,7 +1390,10 @@ class Handler(BaseHTTPRequestHandler):
                         session = SESSIONS.get(session_id)
                     if session is None:
                         raise ApiError("session not found", 404)
-                    session.set_reasoning_level(payload.get("reasoning_level"))
+                    if "reasoning_level" in payload:
+                        session.set_reasoning_level(payload.get("reasoning_level"))
+                    if "approval_mode" in payload:
+                        session.set_approval_mode(payload.get("approval_mode"))
                     return self.send_json(session.state())
                 if len(pieces) == 2 and pieces[1] == "retry":
                     session_id = validate_run_id(urllib.parse.unquote(pieces[0]))
@@ -1261,6 +1410,14 @@ class Handler(BaseHTTPRequestHandler):
                     if session is None:
                         raise ApiError("session not found", 404)
                     session.stop()
+                    return self.send_json(session.state(), 202)
+                if len(pieces) == 2 and pieces[1] == "approval":
+                    session_id = validate_run_id(urllib.parse.unquote(pieces[0]))
+                    with SESSION_LOCK:
+                        session = SESSIONS.get(session_id)
+                    if session is None:
+                        raise ApiError("session not found", 404)
+                    session.resolve_approval(payload.get("decision"))
                     return self.send_json(session.state(), 202)
                 if len(pieces) == 2 and pieces[1] == "messages":
                     session_id = validate_run_id(urllib.parse.unquote(pieces[0]))

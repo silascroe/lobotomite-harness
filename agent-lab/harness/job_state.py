@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 
-JOB_STATUSES = {"idle", "running", "completed", "failed", "interrupted"}
+JOB_STATUSES = {"idle", "running", "waiting_approval", "completed", "failed", "interrupted"}
 
 
 class JobStateError(ValueError):
@@ -135,6 +135,35 @@ def update_progress(job: dict[str, Any], *, step: int, action: str, now: str | N
         "updated_at": now or _now(),
         "current_step": int(step),
         "last_action": str(action),
+    })
+    return current
+
+
+def mark_waiting_approval(job: dict[str, Any], *, step: int, now: str | None = None) -> dict[str, Any]:
+    current = normalize_job(job)
+    if current["status"] != "running":
+        raise JobStateError(f"cannot await approval for a {current['status']} job")
+    if int(step) < 0:
+        raise JobStateError("approval step must be non-negative")
+    current.update({
+        "status": "waiting_approval",
+        "updated_at": now or _now(),
+        "current_step": int(step),
+        "last_action": "approval_requested",
+    })
+    return current
+
+
+def resume_approval(job: dict[str, Any], *, now: str | None = None) -> dict[str, Any]:
+    current = normalize_job(job)
+    if current["status"] != "waiting_approval":
+        raise JobStateError(f"cannot resume approval for a {current['status']} job")
+    current.update({
+        "status": "running",
+        "updated_at": now or _now(),
+        "finished_at": None,
+        "last_action": "approval_resolved",
+        "error": "",
     })
     return current
 

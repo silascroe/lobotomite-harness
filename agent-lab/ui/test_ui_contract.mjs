@@ -66,6 +66,19 @@ test("durable review evidence has a visible inspector surface", () => {
   assert.match(css, /\.review-diff/);
 });
 
+test("tool approval controls expose durable confirm and resume actions", () => {
+  for (const id of ["approvalMode", "approvalJob", "approveJobButton", "denyJobButton", "approveRunButton", "denyRunButton"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `missing #${id}`);
+  }
+  assert.match(app, /function changeApprovalMode\(/);
+  assert.match(app, /function resolveJobApproval\(/);
+  assert.match(app, /function resolveRunApproval\(/);
+  assert.match(app, /sessions.*\/approval|\/approval/);
+  assert.match(app, /approval_mode/);
+  assert.match(css, /\.approval-control/);
+  assert.match(css, /\.approval-job/);
+});
+
 test("recovery events have readable activity copy", () => {
   assert.match(app, /case "recovery_retry"/);
   assert.match(app, /case "recovery_duplicate_action"/);
