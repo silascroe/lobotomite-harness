@@ -38,6 +38,7 @@ from agent_harness import (  # noqa: E402
     json_text,
     iter_project_files,
     normalize_reasoning_level,
+    recovery_instruction,
     reasoning_options,
 )
 from skills import (  # noqa: E402
@@ -837,7 +838,7 @@ class InteractiveSession:
                     "instruction": (
                         "Continue the user's request, then use respond."
                         if result.get("ok") is not False
-                        else "Repair the tool failure or choose a different action, then use respond."
+                        else recovery_instruction(action, result, interactive=True)
                     ),
                 }
                 self.harness.messages.append({"role": "user", "content": self.harness.user_content(json_text(observation))})

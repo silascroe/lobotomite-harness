@@ -218,6 +218,26 @@ def clip(text: str, limit: int) -> str:
     return text[:limit] + f"\n...[truncated at {limit} characters]"
 
 
+def recovery_instruction(action: str, result: dict[str, Any], *, interactive: bool = False) -> str:
+    """Give the model a concrete next move after a failed tool call."""
+    detail = str(result.get("error") or result.get("stderr") or "tool returned a failure")
+    lowered = detail.lower()
+    suffix = "then use respond." if interactive else "then continue the task."
+
+    if action == "apply_patch" and any(term in lowered for term in ("context", "hunk", "match")):
+        return (
+            "The apply_patch hunk did not match the current file. Read the target file again with read_file, "
+            "then use replace_text or write_file with the exact current content; do not repeat the same stale patch, "
+            f"{suffix}"
+        )
+    if action == "apply_patch" and any(term in lowered for term in ("end patch", "end marker", "incomplete")):
+        return (
+            "The patch body was incomplete. Read the target file, then retry with a complete patch ending in "
+            f"*** End Patch, or use replace_text/write_file; {suffix}"
+        )
+    return f"Repair the {action} failure or choose a different action, then {suffix}"
+
+
 def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2)
 
@@ -965,8 +985,9 @@ class AgentHarness:
                 content = self.apply_update(path.read_text(encoding="utf-8"), body)
             pending.append((relative_path, path, content))
 
-        if not found_end:
-            raise HarnessError("patch must end with *** End Patch")
+        implicit_end = not found_end
+        if implicit_end and not pending:
+            raise HarnessError("patch must include at least one file operation")
 
         total_bytes = self.current_project_bytes()
         for relative_path, path, content in pending:
@@ -982,7 +1003,7 @@ class AgentHarness:
         for relative_path, _path, content in pending:
             self.write_file({"path": relative_path, "content": content})
             changed.append(relative_path)
-        return {"ok": True, "changed": changed}
+        return {"ok": True, "changed": changed, "implicit_end": implicit_end}
 
     def validate_command(self, command: Any) -> list[str]:
         if not isinstance(command, str) or not command.strip():
@@ -1538,7 +1559,7 @@ class AgentHarness:
                     "instruction": (
                         "Continue the task. Return exactly one JSON object for the next action."
                         if result.get("ok") is not False
-                        else "Repair the tool failure or choose a different action, then continue the task."
+                        else recovery_instruction(action, result)
                     ),
                 }
                 self.messages.append({"role": "user", "content": self.user_content(json_text(observation))})

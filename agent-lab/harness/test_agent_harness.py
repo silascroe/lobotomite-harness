@@ -312,6 +312,33 @@ const b = 2;
             "const a = 3;\nconst b = 2;\n",
         )
 
+    def test_update_patch_accepts_end_of_input_as_an_implicit_end_marker(self) -> None:
+        self.harness.write_file({"path": "script.js", "content": "const a = 1;\n"})
+
+        result = self.harness.apply_patch(
+            {
+                "patch": """*** Begin Patch
+*** Update File: script.js
+@@
+-const a = 1;
++const a = 2;
+"""
+            }
+        )
+
+        self.assertEqual(result["changed"], ["script.js"])
+        self.assertEqual((self.project_dir / "script.js").read_text(encoding="utf-8"), "const a = 2;\n")
+
+    def test_patch_context_failure_gives_specific_recovery_guidance(self) -> None:
+        instruction = MODULE.recovery_instruction(
+            "apply_patch",
+            {"ok": False, "error": "could not find update-patch context in target file"},
+        )
+
+        self.assertIn("read_file", instruction)
+        self.assertIn("replace_text", instruction)
+        self.assertIn("do not repeat", instruction.lower())
+
     def test_replace_text_dispatches_an_exact_single_replacement(self) -> None:
         self.harness.dispatch("write_file", {"path": "hello.txt", "content": "hello\nhello\n"})
 
