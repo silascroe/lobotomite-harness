@@ -235,7 +235,12 @@ def recovery_instruction(action: str, result: dict[str, Any], *, interactive: bo
             "The patch body was incomplete. Read the target file, then retry with a complete patch ending in "
             f"*** End Patch, or use replace_text/write_file; {suffix}"
         )
-    return f"Repair the {action} failure or choose a different action, then {suffix}"
+    if action in {"write_file", "replace_text", "read_file", "list_files"} and "path" in lowered:
+        return (
+            f"The {action} call is missing a valid args.path. Retry with args.path set to a non-empty relative "
+            f"project path and include all other required fields; {suffix}"
+        )
+    return f"Repair the {action} failure or choose a different action; {suffix}"
 
 
 def json_text(value: Any) -> str:
@@ -520,6 +525,7 @@ Rules:
 - Use relative paths only. Never use '..', absolute paths, or paths outside the project.
 - Start by inspecting the project with list_files and read_file when useful.
 - Make changes with write_file, replace_text, or apply_patch. Keep edits focused.
+- Every action must include all required fields; write_file, replace_text, read_file, and list_files always need a non-empty relative args.path. Never send a content-only write_file call.
 - Prefer replace_text for a small exact edit: it requires an exact match count and keeps the original file unchanged when the count is wrong.
 - apply_patch hunks must follow a file header such as `*** Update File: styles.css`.
 - Use run_command to validate your work. It has a small allowlist and no shell.

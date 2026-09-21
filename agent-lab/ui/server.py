@@ -77,6 +77,7 @@ The user is talking to you directly. Answer ordinary questions naturally with th
 
 Rules:
 - Use relative paths only. Never use '..', absolute paths, or paths outside the project.
+- Every action must include all required fields; write_file, replace_text, read_file, and list_files always need a non-empty relative args.path. Never send a content-only write_file call.
 - Do not claim a file was created or tested until a tool result proves it.
 - There is no network access for this session. Do not install packages or fetch assets.
 - Preserve existing project work unless the user explicitly asks you to replace it.

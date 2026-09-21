@@ -339,6 +339,16 @@ const b = 2;
         self.assertIn("replace_text", instruction)
         self.assertIn("do not repeat", instruction.lower())
 
+    def test_missing_write_path_gives_field_specific_recovery_guidance(self) -> None:
+        instruction = MODULE.recovery_instruction(
+            "write_file",
+            {"ok": False, "error": "path must be a non-empty relative string"},
+        )
+
+        self.assertIn("args.path", instruction)
+        self.assertIn("relative", instruction.lower())
+        self.assertIn("write_file", instruction)
+
     def test_replace_text_dispatches_an_exact_single_replacement(self) -> None:
         self.harness.dispatch("write_file", {"path": "hello.txt", "content": "hello\nhello\n"})
 
