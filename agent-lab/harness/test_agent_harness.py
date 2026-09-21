@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -215,6 +216,25 @@ class HarnessUnitTests(unittest.TestCase):
             }
         )
         self.assertEqual((self.project_dir / "hello.txt").read_text(encoding="utf-8"), "hello world\n")
+
+    def test_multi_file_patch_validates_every_file_before_writing_any_file(self) -> None:
+        self.harness.write_file({"path": "first.txt", "content": "old\n"})
+        patch = """*** Begin Patch
+*** Update File: first.txt
+@@
+-old
++new
+*** Update File: missing.txt
+@@
+-old
++new
+*** End Patch"""
+
+        with self.assertRaises(MODULE.HarnessError):
+            self.harness.apply_patch({"patch": patch})
+
+        self.assertEqual((self.project_dir / "first.txt").read_text(encoding="utf-8"), "old\n")
+        self.assertFalse((self.project_dir / "missing.txt").exists())
 
     def test_apply_patch_explains_that_hunks_need_a_file_header(self) -> None:
         with self.assertRaises(MODULE.HarnessError) as raised:
@@ -530,6 +550,30 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(dispatched, ["list_files"])
         self.assertEqual(harness.status, "success")
+
+    def test_run_persists_transcript_and_progress_before_the_next_model_call(self) -> None:
+        read = '{"action":"list_files","args":{"path":"."}}'
+        finish = '{"action":"finish","args":{"status":"success","summary":"done"}}'
+        harness = self._fake_run_harness([read, finish])
+        original_call = harness.call_model
+        checkpoints: list[tuple[list[dict[str, str]], dict[str, object]]] = []
+
+        def call_model() -> dict[str, object]:
+            if harness.model_calls >= 1:
+                transcript = json.loads((harness.run_dir / "transcript.json").read_text(encoding="utf-8"))
+                progress = MODULE.load_json(harness.run_dir / "progress.json")
+                checkpoints.append((transcript, progress))
+            return original_call()
+
+        harness.call_model = call_model
+
+        self.assertEqual(harness.run(), 0)
+        self.assertEqual(len(checkpoints), 1)
+        transcript, progress = checkpoints[0]
+        self.assertEqual(transcript[-1]["role"], "user")
+        self.assertIn("list_files", transcript[-1]["content"])
+        self.assertEqual(progress["status"], "running")
+        self.assertEqual(progress["turn"], 1)
 
 
 if __name__ == "__main__":

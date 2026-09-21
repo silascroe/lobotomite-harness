@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from persistence import atomic_write_json
+
 
 PHASES = (
     "intake",
@@ -214,7 +216,7 @@ def observe_tool(state: dict[str, Any], action: str, result: dict[str, Any]) -> 
 def save_workflow(path: Path, state: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_snapshot(state)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(path, normalized)
     return normalized
 
 

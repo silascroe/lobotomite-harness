@@ -63,7 +63,7 @@ The current tools are:
 - `read_file`
 - `write_file`
 - `replace_text` (exact, bounded text replacement with a required match count)
-- `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header)
+- `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header, and every file is validated before the batch is written)
 - `run_command` (no shell; Python, Node, and `npm test` are allowlisted by config)
 - `git_diff` (a diff against the run's initial files)
 - `workflow_checkpoint` (an observable phase, summary, next action, and artifact list)
@@ -122,9 +122,13 @@ The control loop also has bounded recovery. The same malformed response, rejecte
 
 Context windows are bounded independently from transcript durability. The full `transcript.json` remains available for rehydration, while each model request uses the configured `context_max_tokens` budget and keeps the system prompt plus the newest turns. Older observable turns are reduced to an inspectable operational summary; hidden reasoning is never reconstructed or claimed. A `context_compacted` event and the current context metadata appear in the run summary, session Inspector, and activity feed, so a long task does not silently become a different conversation.
 
+Harness-owned JSON snapshots and project-file edits use same-directory atomic replacement. A stopped process can leave a hidden temporary file, but it cannot turn the active transcript, session record, workflow snapshot, or edited text file into half a JSON document or a truncated file.
+
 For a new benchmark, change the task file and its completion gates (`required_files`, `require_validation`, and `evaluator`) together; otherwise you would be grading a new task with the old page's ruler.
 
 The static-page checker is deliberately outside the agent project so the model cannot edit its own grading code. The configured evaluator is also a completion gate: the harness rejects a claimed success until the checker passes.
+
+Non-interactive runs also checkpoint `transcript.json` and `progress.json` after each turn and tool observation. If the UI process is restarted before `summary.json` is written, the run is shown as interrupted with its last durable turn, call counts, workflow, and context metadata instead of being mislabeled as an empty aborted run.
 
 ```powershell
 $py = 'C:\Users\ringd\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'

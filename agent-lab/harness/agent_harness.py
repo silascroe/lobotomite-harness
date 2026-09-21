@@ -33,6 +33,7 @@ from workflow import (
 )
 from control_loop import RecoveryController, RecoveryDecision
 from context_window import build_context
+from persistence import atomic_write_json, atomic_write_text
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 
 
@@ -247,7 +248,7 @@ def iter_project_files(root: Path, config: dict[str, Any]):
 
 
 def write_json(path: Path, value: Any) -> None:
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_json(path, value)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -563,6 +564,7 @@ class AgentHarness:
         self.initial_files: dict[str, bytes] = {}
         self.model_calls = 0
         self.tool_calls = 0
+        self.current_turn = 0
         self.validation_passed = False
         self.had_tool_error = False
         self.evaluation: dict[str, Any] | None = None
@@ -667,7 +669,7 @@ class AgentHarness:
                 "managed": self.workspace_mode == "managed",
             },
         )
-        (self.run_dir / "task.md").write_text(self.task, encoding="utf-8")
+        atomic_write_text(self.run_dir / "task.md", self.task)
         write_json(self.run_dir / "config.json", self.config)
         self.logger.event(
             "run_created",
@@ -789,8 +791,7 @@ class AgentHarness:
         if new_total > int(self.config.get("max_total_project_bytes", 500000)):
             raise HarnessError("write would exceed max_total_project_bytes")
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8", newline="") as handle:
-            handle.write(content)
+        atomic_write_text(path, content)
         return {
             "ok": True,
             "path": relative_name(path, self.project_dir),
@@ -917,11 +918,14 @@ class AgentHarness:
         lines = self.clean_patch(patch).splitlines()
         if not lines or lines[0].strip() != "*** Begin Patch":
             raise HarnessError("patch must start with *** Begin Patch")
-        changed: list[str] = []
+        pending: list[tuple[str, Path, str]] = []
+        seen_paths: set[Path] = set()
         index = 1
+        found_end = False
         while index < len(lines):
             line = lines[index]
             if line.strip() == "*** End Patch":
+                found_end = True
                 break
             match = re.match(r"\*\*\* (Add File|Update File|Delete File): (.+)$", line)
             if not match:
@@ -929,7 +933,11 @@ class AgentHarness:
                     "apply_patch requires a file header like '*** Update File: styles.css' before any hunks"
                 )
             operation, raw_path = match.groups()
-            path = self.resolve_path(raw_path.strip(), allow_project_root=False)
+            relative_path = raw_path.strip()
+            path = self.resolve_path(relative_path, allow_project_root=False)
+            if path in seen_paths:
+                raise HarnessError(f"patch names the same file more than once: {relative_path}")
+            seen_paths.add(path)
             index += 1
             body: list[str] = []
             while index < len(lines) and not lines[index].startswith("*** "):
@@ -950,8 +958,25 @@ class AgentHarness:
                 if not path.is_file():
                     raise HarnessError(f"cannot update missing file: {raw_path}")
                 content = self.apply_update(path.read_text(encoding="utf-8"), body)
-            self.write_file({"path": raw_path, "content": content})
-            changed.append(raw_path.strip())
+            pending.append((relative_path, path, content))
+
+        if not found_end:
+            raise HarnessError("patch must end with *** End Patch")
+
+        total_bytes = self.current_project_bytes()
+        for relative_path, path, content in pending:
+            data = content.encode("utf-8")
+            if len(data) > self.max_file_bytes:
+                raise HarnessError(f"file is {len(data)} bytes; max is {self.max_file_bytes}: {relative_path}")
+            old_bytes = path.stat().st_size if path.is_file() else 0
+            total_bytes += len(data) - old_bytes
+        if total_bytes > int(self.config.get("max_total_project_bytes", 500000)):
+            raise HarnessError("patch would exceed max_total_project_bytes")
+
+        changed: list[str] = []
+        for relative_path, _path, content in pending:
+            self.write_file({"path": relative_path, "content": content})
+            changed.append(relative_path)
         return {"ok": True, "changed": changed}
 
     def validate_command(self, command: Any) -> list[str]:
@@ -1271,6 +1296,25 @@ class AgentHarness:
     def save_transcript(self) -> None:
         write_json(self.run_dir / "transcript.json", self.messages)
 
+    def save_progress(self, *, turn: int | None = None) -> None:
+        if turn is not None:
+            self.current_turn = max(0, int(turn))
+        status = self.status if self.status != "not_started" else "running"
+        write_json(
+            self.run_dir / "progress.json",
+            {
+                "status": status,
+                "turn": self.current_turn,
+                "model_calls": self.model_calls,
+                "tool_calls": self.tool_calls,
+                "workflow": self.workflow,
+                "workflow_evidence": dict(self.workflow_evidence),
+                "context": dict(self.context_metadata),
+                "summary": self.finish_summary,
+                "updated_at": iso_now(),
+            },
+        )
+
     def recovery_event(
         self,
         event: str,
@@ -1326,20 +1370,29 @@ class AgentHarness:
             "blocked_reason": self.blocked_reason,
         }
         write_json(self.run_dir / "summary.json", summary)
+        self.save_progress()
 
     def run(self) -> int:
         self.prepare()
+        self.status = "running"
+        self.save_transcript()
+        self.save_progress(turn=0)
         max_turns = int(self.config.get("max_turns", 18))
         correction = ""
         try:
             for turn in range(1, max_turns + 1):
+                self.current_turn = turn
                 if correction:
                     self.messages.append({"role": "user", "content": self.user_content(correction)})
+                    self.save_transcript()
+                    self.save_progress(turn=turn)
                 print(f"turn {turn}/{max_turns}: asking model")
                 response = self.call_model()
                 content = response["content"]
                 self.logger.event("model_response", turn=turn, **response)
                 self.messages.append({"role": "assistant", "content": content})
+                self.save_transcript()
+                self.save_progress(turn=turn)
                 try:
                     parsed = extract_json_object(content)
                     action = parsed.get("action")
@@ -1469,6 +1522,8 @@ class AgentHarness:
                     ),
                 }
                 self.messages.append({"role": "user", "content": self.user_content(json_text(observation))})
+                self.save_transcript()
+                self.save_progress(turn=turn)
 
             self.status = "blocked"
             self.finish_summary = f"reached the {max_turns}-turn limit without a finish action"

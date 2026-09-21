@@ -165,6 +165,22 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["workflow"]["phase"], "plan")
         self.assertEqual(state["workflow"]["next_action"], "Implement the first task.")
 
+    def test_run_state_reports_a_stale_running_progress_snapshot_as_interrupted(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-interrupted"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (run_dir / "progress.json").write_text(
+            json.dumps({"status": "running", "turn": 4, "model_calls": 4, "tool_calls": 3}),
+            encoding="utf-8",
+        )
+
+        state = MODULE.run_state("run-interrupted")
+
+        self.assertEqual(state["status"], "interrupted")
+        self.assertEqual(state["progress"]["turn"], 4)
+
     def test_rehydrate_session_restores_context_and_clears_stale_busy_state(self) -> None:
         session_dir = MODULE.SESSION_DIR / "chat-restore"
         project_dir = session_dir / "project"

@@ -49,6 +49,7 @@ from skills import (  # noqa: E402
     public_skill,
     resolve_skill_selection,
 )
+from persistence import atomic_write_json  # noqa: E402
 from job_state import (  # noqa: E402
     JobStateError,
     complete_job,
@@ -208,10 +209,7 @@ def create_project(raw_name: Any) -> dict[str, Any]:
     workspace = project_root / "workspace"
     workspace.mkdir(parents=True)
     created_at = datetime.now().astimezone().isoformat(timespec="seconds")
-    (project_root / "project.json").write_text(
-        json.dumps({"project_id": candidate, "name": name, "created_at": created_at}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_json(project_root / "project.json", {"project_id": candidate, "name": name, "created_at": created_at})
     return {"project_id": candidate, "name": name, "path": str(workspace.resolve()), "created_at": created_at, "files": 0}
 
 
@@ -298,6 +296,7 @@ def run_state(run_id: str) -> dict[str, Any]:
     run_dir = resolve_inside(RUNS_DIR, run_id)
     project = run_project_dir(run_id)
     summary = read_json(run_dir / "summary.json") or {}
+    progress = read_json(run_dir / "progress.json") or {}
     workflow = load_workflow(run_dir / "workflow.json")
     with PROCESS_LOCK:
         process = PROCESSES.get(run_id)
@@ -306,6 +305,10 @@ def run_state(run_id: str) -> dict[str, Any]:
         status = summary["status"]
     elif process is not None and process.poll() is None:
         status = "running"
+    elif progress.get("status") == "running":
+        status = "interrupted"
+    elif progress.get("status") in {"success", "blocked", "error"}:
+        status = progress["status"]
     elif process is not None:
         status = "error" if process.returncode else "complete"
     else:
@@ -314,6 +317,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "run_id": run_id,
         "status": status,
         "summary": summary,
+        "progress": progress,
         "output": output[-200:],
         "events": read_events(run_id),
         "files": project_files(run_id),
@@ -321,6 +325,10 @@ def run_state(run_id: str) -> dict[str, Any]:
         "workspace_mode": summary.get("workspace_mode") or ("managed" if project == (run_dir / "project").resolve() else "selected"),
         "workflow": workflow,
         "skills": summary.get("skills", {}),
+        "model": summary.get("model", ""),
+        "model_calls": summary.get("model_calls", progress.get("model_calls", 0)),
+        "tool_calls": summary.get("tool_calls", progress.get("tool_calls", 0)),
+        "context": summary.get("context", progress.get("context", {})),
     }
 
 
@@ -571,7 +579,7 @@ class InteractiveSession:
                 "job": self.job,
                 "conversation": self.conversation,
             }
-        (self.run_dir / "session.json").write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        atomic_write_json(self.run_dir / "session.json", value)
         self.harness.save_transcript()
 
     def state(self) -> dict[str, Any]:
