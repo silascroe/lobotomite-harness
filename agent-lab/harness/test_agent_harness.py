@@ -43,11 +43,21 @@ class HarnessUnitTests(unittest.TestCase):
         with self.assertRaises(MODULE.HarnessError):
             self.harness.resolve_path("../outside")
 
+    def test_json_recovery_preserves_literal_backslashes_and_balances_outer_object(self) -> None:
+        malformed = r'{"action":"write_file","args":{"path":"styles.css","content":"\input { color: red; }"}'
+
+        value = MODULE.extract_json_object(malformed)
+
+        self.assertEqual(value["action"], "write_file")
+        self.assertEqual(value["args"]["content"], r"\input { color: red; }")
+
     def test_personality_is_added_without_replacing_protocol(self) -> None:
         prompt = self.harness.system_content()
         self.assertIn("restrained infernal workshop spirit", prompt)
         self.assertIn("Every response must be exactly one JSON object", prompt)
         self.assertIn("Never call the user", prompt)
+        self.assertIn('"action":"replace_text"', prompt)
+        self.assertIn("*** Update File:", prompt)
 
     def test_selected_skills_are_injected_without_unused_skill_text(self) -> None:
         harness = MODULE.AgentHarness(
@@ -171,6 +181,79 @@ class HarnessUnitTests(unittest.TestCase):
             }
         )
         self.assertEqual((self.project_dir / "hello.txt").read_text(encoding="utf-8"), "hello world\n")
+
+    def test_apply_patch_explains_that_hunks_need_a_file_header(self) -> None:
+        with self.assertRaises(MODULE.HarnessError) as raised:
+            self.harness.apply_patch(
+                {"patch": "*** Begin Patch\n\nbody without a target file\n*** End Patch"}
+            )
+
+        self.assertIn("file header", str(raised.exception))
+        self.assertIn("*** Update File:", str(raised.exception))
+
+    def test_replace_text_dispatches_an_exact_single_replacement(self) -> None:
+        self.harness.dispatch("write_file", {"path": "hello.txt", "content": "hello\nhello\n"})
+
+        result = self.harness.dispatch(
+            "replace_text",
+            {
+                "path": "hello.txt",
+                "old_text": "hello\n",
+                "new_text": "goodbye\n",
+                "expected_replacements": 2,
+            },
+        )
+
+        self.assertEqual(result["replacements"], 2)
+        self.assertEqual((self.project_dir / "hello.txt").read_text(encoding="utf-8"), "goodbye\ngoodbye\n")
+
+    def test_replace_text_rejects_an_unexpected_match_count_without_mutating(self) -> None:
+        self.harness.write_file({"path": "hello.txt", "content": "hello\nhello\n"})
+
+        with self.assertRaises(MODULE.HarnessError):
+            self.harness.replace_text(
+                {
+                    "path": "hello.txt",
+                    "old_text": "hello\n",
+                    "new_text": "goodbye\n",
+                    "expected_replacements": 1,
+                }
+            )
+
+        self.assertEqual((self.project_dir / "hello.txt").read_text(encoding="utf-8"), "hello\nhello\n")
+
+    def test_replace_text_invalidates_previous_verification_evidence(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "replace-evidence-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="replace evidence task",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "allow_commands": ["cmd"],
+                "require_workflow_gates": True,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.dispatch("list_files", {"path": "."})
+        harness.dispatch(
+            "workflow_checkpoint",
+            {"phase": "plan", "summary": "Plan recorded.", "next_action": "Implement."},
+        )
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>one</main>\n"})
+        harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+        self.assertNotIn("verify", harness.missing_workflow_gates())
+
+        harness.dispatch(
+            "replace_text",
+            {"path": "index.html", "old_text": "one", "new_text": "two"},
+        )
+
+        self.assertIn("verify", harness.missing_workflow_gates())
 
     def test_write_file_and_command_guards(self) -> None:
         result = self.harness.write_file({"path": "hello.js", "content": "console.log('ok');\n"})

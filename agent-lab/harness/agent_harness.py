@@ -41,6 +41,7 @@ ACTION_NAMES = {
     "list_files",
     "read_file",
     "write_file",
+    "replace_text",
     "apply_patch",
     "run_command",
     "git_diff",
@@ -266,6 +267,44 @@ def ensure_run_id(run_id: str) -> str:
     return run_id
 
 
+def _repair_invalid_json_escapes(content: str) -> str:
+    """Escape unknown backslashes inside strings as literal backslashes."""
+    repaired: list[str] = []
+    in_string = False
+    index = 0
+    simple_escapes = {'"', "\\", "/", "b", "f", "n", "r", "t"}
+    while index < len(content):
+        char = content[index]
+        if not in_string:
+            repaired.append(char)
+            if char == '"':
+                in_string = True
+            index += 1
+            continue
+        if char == '"':
+            repaired.append(char)
+            in_string = False
+            index += 1
+            continue
+        if char != "\\":
+            repaired.append(char)
+            index += 1
+            continue
+        next_char = content[index + 1] if index + 1 < len(content) else ""
+        valid_unicode = (
+            next_char == "u"
+            and index + 5 < len(content)
+            and all(value in "0123456789abcdefABCDEF" for value in content[index + 2 : index + 6])
+        )
+        if next_char in simple_escapes or valid_unicode:
+            repaired.append(content[index : index + (6 if valid_unicode else 2)])
+            index += 6 if valid_unicode else 2
+            continue
+        repaired.append("\\\\")
+        index += 1
+    return "".join(repaired)
+
+
 def _repair_json_controls(content: str) -> str:
     """Escape literal control characters that models sometimes put in JSON strings."""
     repaired: list[str] = []
@@ -386,7 +425,8 @@ def _repair_json_delimiters(content: str) -> str:
 def _decode_json_object(candidate: str) -> dict[str, Any] | None:
     decoder = json.JSONDecoder()
     terminated = _repair_escaped_terminator(candidate)
-    repaired = _repair_json_controls(terminated)
+    escaped = _repair_invalid_json_escapes(terminated)
+    repaired = _repair_json_controls(escaped)
     structural = _repair_json_delimiters(repaired)
     sources = (
         candidate,
@@ -457,7 +497,9 @@ You are working inside the project directory assigned to this run. It may be a n
 Rules:
 - Use relative paths only. Never use '..', absolute paths, or paths outside the project.
 - Start by inspecting the project with list_files and read_file when useful.
-- Make changes with write_file or apply_patch. Keep edits focused.
+- Make changes with write_file, replace_text, or apply_patch. Keep edits focused.
+- Prefer replace_text for a small exact edit: it requires an exact match count and keeps the original file unchanged when the count is wrong.
+- apply_patch hunks must follow a file header such as `*** Update File: styles.css`.
 - Use run_command to validate your work. It has a small allowlist and no shell.
 - Preserve existing project work unless the user explicitly asks you to replace it.
 - There is no network access for this task. Do not try to install packages or fetch assets.
@@ -473,7 +515,8 @@ Available actions:
 {"action":"list_files","args":{"path":".","max_depth":3}}
 {"action":"read_file","args":{"path":"relative/path","max_chars":12000}}
 {"action":"write_file","args":{"path":"relative/path","content":"complete UTF-8 file contents"}}
-{"action":"apply_patch","args":{"patch":"*** Begin Patch\\n...\\n*** End Patch"}}
+{"action":"replace_text","args":{"path":"relative/path","old_text":"exact text to find","new_text":"replacement text","expected_replacements":1}}
+{"action":"apply_patch","args":{"patch":"*** Begin Patch\\n*** Update File: styles.css\\n@@\\n-old line\\n+new line\\n*** End Patch"}}
 {"action":"run_command","args":{"command":"python -m unittest discover"}}
 {"action":"git_diff","args":{"max_chars":12000}}
 {"action":"find_skills","args":{"query":"browser testing","source":"local"}}
@@ -734,6 +777,45 @@ class AgentHarness:
             "created": not was_existing_file,
         }
 
+    def replace_text(self, args: dict[str, Any]) -> dict[str, Any]:
+        path = self.resolve_path(args.get("path"), allow_project_root=False)
+        old_text = args.get("old_text")
+        new_text = args.get("new_text")
+        expected_replacements = args.get("expected_replacements", 1)
+        if not isinstance(old_text, str) or not old_text:
+            raise HarnessError("replace_text requires non-empty old_text")
+        if not isinstance(new_text, str):
+            raise HarnessError("replace_text requires string new_text")
+        if isinstance(expected_replacements, bool) or not isinstance(expected_replacements, int):
+            raise HarnessError("replace_text expected_replacements must be an integer")
+        max_replacements = int(self.config.get("max_text_replacements", 20))
+        if expected_replacements < 1 or expected_replacements > max_replacements:
+            raise HarnessError(
+                f"replace_text expected_replacements must be between 1 and {max_replacements}"
+            )
+        if not path.is_file():
+            raise HarnessError(f"cannot replace text in missing file: {args.get('path')}")
+        if old_text == new_text:
+            raise HarnessError("replace_text would not change the file")
+        try:
+            original = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise HarnessError("replace_text requires a UTF-8 text file") from exc
+        matches = original.count(old_text)
+        if matches != expected_replacements:
+            raise HarnessError(
+                f"expected {expected_replacements} exact replacements, found {matches}; file was not changed"
+            )
+        result = self.write_file(
+            {
+                "path": args.get("path"),
+                "content": original.replace(old_text, new_text),
+            }
+        )
+        result["replacements"] = matches
+        result["changed"] = True
+        return result
+
     @staticmethod
     def clean_patch(patch: str) -> str:
         value = patch.strip()
@@ -822,7 +904,9 @@ class AgentHarness:
                 break
             match = re.match(r"\*\*\* (Add File|Update File|Delete File): (.+)$", line)
             if not match:
-                raise HarnessError(f"unsupported patch header: {line}")
+                raise HarnessError(
+                    "apply_patch requires a file header like '*** Update File: styles.css' before any hunks"
+                )
             operation, raw_path = match.groups()
             path = self.resolve_path(raw_path.strip(), allow_project_root=False)
             index += 1
@@ -987,7 +1071,7 @@ class AgentHarness:
         if isinstance(result, dict) and result.get("ok"):
             if action in {"list_files", "read_file"}:
                 self.workflow_evidence["inspect"] = True
-            elif action in {"write_file", "apply_patch"}:
+            elif action in {"write_file", "replace_text", "apply_patch"}:
                 self.workflow_evidence["implement"] = True
                 self.workflow_evidence["verify"] = False
                 self.validation_passed = False
@@ -1007,6 +1091,8 @@ class AgentHarness:
             result = self.read_file(args)
         elif action == "write_file":
             result = self.write_file(args)
+        elif action == "replace_text":
+            result = self.replace_text(args)
         elif action == "apply_patch":
             result = self.apply_patch(args)
         elif action == "run_command":
@@ -1154,7 +1240,7 @@ class AgentHarness:
         if action == "list_files":
             entries = result.get("entries", [])
             print(f"  {action}: {len(entries)} entries")
-        elif action in {"write_file", "apply_patch"}:
+        elif action in {"write_file", "replace_text", "apply_patch"}:
             print(f"  {action}: {result.get('changed', result.get('path', 'done'))}")
         elif action == "run_command":
             print(f"  {action}: exit {result.get('exit_code', 'error')}")

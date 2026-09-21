@@ -67,6 +67,7 @@ the requested additive config/docs changes.
 
 ## Review
 
-Pending implementation. Final review must check for gate weakening, duplicate
-dispatch, stale worker races, missing persistence, and claims unsupported by
-fresh command output.
+Complete. Final review checked for gate weakening, duplicate dispatch, stale
+worker races, missing persistence, and claims unsupported by fresh command
+output; the follow-up edit-recovery slice was verified separately against a
+live E2B benchmark.

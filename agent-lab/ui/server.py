@@ -30,6 +30,7 @@ STATIC_CACHE_CONTROL = "no-store, max-age=0"
 
 sys.path.insert(0, str(HARNESS.parent))
 from agent_harness import (  # noqa: E402
+    ACTION_NAMES,
     AgentHarness,
     HarnessError,
     RecoveryController,
@@ -85,7 +86,8 @@ Response shapes:
 {"action":"list_files","args":{"path":".","max_depth":3}}
 {"action":"read_file","args":{"path":"relative/path","max_chars":12000}}
 {"action":"write_file","args":{"path":"relative/path","content":"complete UTF-8 file contents"}}
-{"action":"apply_patch","args":{"patch":"*** Begin Patch\\n...\\n*** End Patch"}}
+{"action":"replace_text","args":{"path":"relative/path","old_text":"exact text to find","new_text":"replacement text","expected_replacements":1}}
+{"action":"apply_patch","args":{"patch":"*** Begin Patch\\n*** Update File: styles.css\\n@@\\n-old line\\n+new line\\n*** End Patch"}}
 {"action":"run_command","args":{"command":"node --check app.js"}}
 {"action":"git_diff","args":{"max_chars":12000}}
 {"action":"find_skills","args":{"query":"browser testing","source":"local"}}
@@ -98,6 +100,8 @@ Workflow guidance:
 
 Use respond when you are done with the user's current message. This is a continuing conversation, so do not use finish.
 """
+
+INTERACTIVE_ACTIONS = {"respond"} | ACTION_NAMES
 
 
 class ApiError(Exception):
@@ -727,7 +731,7 @@ class InteractiveSession:
                     args = parsed.get("args", {})
                     if not isinstance(args, dict):
                         raise HarnessError("args must be a JSON object")
-                    if action not in {"respond", "list_files", "read_file", "write_file", "apply_patch", "run_command", "git_diff", "find_skills", "workflow_checkpoint", "finish"}:
+                    if action not in INTERACTIVE_ACTIONS:
                         raise HarnessError("unknown interactive action")
                 except (HarnessError, AttributeError) as exc:
                     error = str(exc)

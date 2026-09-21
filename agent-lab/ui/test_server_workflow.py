@@ -55,6 +55,11 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["workflow"]["status"], "active")
         self.assertTrue((session.run_dir / "workflow.json").is_file())
 
+    def test_interactive_contract_exposes_exact_replace_text_action(self) -> None:
+        self.assertIn("replace_text", MODULE.INTERACTIVE_ACTIONS)
+        self.assertIn('"action":"replace_text"', MODULE.INTERACTIVE_SYSTEM_PROMPT)
+        self.assertIn("*** Update File:", MODULE.INTERACTIVE_SYSTEM_PROMPT)
+
     def test_skill_catalog_exposes_bundled_and_project_local_sources(self) -> None:
         project = Path(self.temp_dir.name) / "project"
         skill_dir = project / "skills" / "field-notes"

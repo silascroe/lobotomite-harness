@@ -62,7 +62,8 @@ The current tools are:
 - `list_files`
 - `read_file`
 - `write_file`
-- `apply_patch` (a small supported subset of the familiar patch format)
+- `replace_text` (exact, bounded text replacement with a required match count)
+- `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header)
 - `run_command` (no shell; Python, Node, and `npm test` are allowlisted by config)
 - `git_diff` (a diff against the run's initial files)
 - `workflow_checkpoint` (an observable phase, summary, next action, and artifact list)
