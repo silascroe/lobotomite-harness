@@ -291,6 +291,27 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertIn("file header", str(raised.exception))
         self.assertIn("*** Update File:", str(raised.exception))
 
+    def test_update_patch_accepts_a_context_line_without_a_leading_space(self) -> None:
+        self.harness.write_file({"path": "script.js", "content": "const a = 1;\nconst b = 2;\n"})
+
+        result = self.harness.apply_patch(
+            {
+                "patch": """*** Begin Patch
+*** Update File: script.js
+@@
+-const a = 1;
++const a = 3;
+const b = 2;
+*** End Patch"""
+            }
+        )
+
+        self.assertEqual(result["changed"], ["script.js"])
+        self.assertEqual(
+            (self.project_dir / "script.js").read_text(encoding="utf-8"),
+            "const a = 3;\nconst b = 2;\n",
+        )
+
     def test_replace_text_dispatches_an_exact_single_replacement(self) -> None:
         self.harness.dispatch("write_file", {"path": "hello.txt", "content": "hello\nhello\n"})
 
@@ -553,6 +574,25 @@ class HarnessUnitTests(unittest.TestCase):
 
         harness.dispatch("write_file", {"path": "index.html", "content": "<main>two</main>\n"})
         self.assertIn("review", harness.missing_workflow_gates())
+
+    def test_evaluator_rejection_names_failed_checks_instead_of_dumping_the_whole_report(self) -> None:
+        self.harness.run_evaluator = lambda: {
+            "configured": True,
+            "passed": False,
+            "stdout": json.dumps(
+                {
+                    "passed": False,
+                    "checks": {"has_focus_style": False, "handles_submit": True},
+                }
+            ),
+            "stderr": "",
+        }
+
+        issue = self.harness.finish_issue({"status": "success"})
+
+        self.assertIsNotNone(issue)
+        self.assertIn("has_focus_style", issue)
+        self.assertNotIn('"checks"', issue)
 
     def _fake_run_harness(self, responses: list[str], *, gated: bool = False) -> MODULE.AgentHarness:
         root = Path(self.temp_dir.name)

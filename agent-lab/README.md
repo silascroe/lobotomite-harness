@@ -63,7 +63,7 @@ The current tools are:
 - `read_file`
 - `write_file`
 - `replace_text` (exact, bounded text replacement with a required match count)
-- `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header, and every file is validated before the batch is written)
+- `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header, tolerate omitted context prefixes from small models, and validate every file before the batch is written)
 - `run_command` (no shell; Python, Node, and `npm test` are allowlisted by config)
 - `git_diff` (a diff against the run's initial files)
 - `workflow_checkpoint` (an observable phase, summary, next action, and artifact list)
@@ -110,7 +110,7 @@ The Run dialog shows the selected skills and lets you enable project-local skill
 
 `find_skills` is a discovery-only action. Local catalog search is available to the model and UI without installation. Searching skills.sh is deliberately a separate, explicit UI action and requires confirmation; it returns recommendations only and never installs or activates remote code.
 
-Evaluated runs use the workflow gates by default. A successful finish must have observable evidence for inspect, plan, implement, verify, and review. Inspection comes from successful reads/listing, implementation from writes or patches, verification from a successful validation command after a mutation, and review from a fresh `git_diff` after the latest mutation. Interactive chats and explicitly ungated custom runs remain flexible; use `--no-gates` only when the task is intentionally outside benchmark evaluation.
+Evaluated runs use the workflow gates by default. A successful finish must have observable evidence for inspect, plan, implement, verify, and review. Inspection comes from successful reads/listing, implementation from writes or patches, verification from a successful validation command after a mutation, and review from a fresh `git_diff` after the latest mutation. If the external evaluator rejects a finish, the repair message names failed checks instead of dumping the whole report. Interactive chats and explicitly ungated custom runs remain flexible; use `--no-gates` only when the task is intentionally outside benchmark evaluation.
 
 ### Restart-safe conversations
 

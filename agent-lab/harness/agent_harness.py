@@ -878,7 +878,10 @@ class AgentHarness:
             elif not line.strip():
                 current_body.append(" ")
             else:
-                raise HarnessError(f"unsupported update-patch line: {line}")
+                # Small local models often omit the conventional context
+                # prefix. Treat a plain line as context, but keep additions
+                # and removals strict so an accidental edit cannot disappear.
+                current_body.append(" " + line)
         if current_body:
             hunks.append((current_header, current_body))
         if not hunks:
@@ -1210,6 +1213,19 @@ class AgentHarness:
         self.logger.event("evaluator", result=result)
         return result
 
+    def evaluator_failure_detail(self, evaluation: dict[str, Any]) -> str:
+        raw = str(evaluation.get("stdout") or evaluation.get("stderr") or "no evaluator output")
+        try:
+            report = json.loads(raw)
+        except json.JSONDecodeError:
+            return clip(raw, 800)
+        checks = report.get("checks") if isinstance(report, dict) else None
+        if isinstance(checks, dict):
+            failed = [str(name) for name, passed in checks.items() if passed is False]
+            if failed:
+                return "failed checks: " + ", ".join(failed[:20])
+        return clip(str(report.get("message") if isinstance(report, dict) else raw), 800)
+
     def finish_issue(self, args: dict[str, Any]) -> str | None:
         requested_status = str(args.get("status", "success"))
         if requested_status == "blocked":
@@ -1233,8 +1249,7 @@ class AgentHarness:
             return "success is not accepted yet; run a local validation command and get exit code 0"
         evaluation = self.run_evaluator()
         if not evaluation.get("passed", False):
-            details = evaluation.get("stdout") or evaluation.get("stderr") or "no evaluator output"
-            return "success is not accepted yet; the external evaluator failed: " + clip(str(details), 1800)
+            return "success is not accepted yet; external evaluator " + self.evaluator_failure_detail(evaluation)
         return None
 
     def call_model(self) -> dict[str, Any]:
