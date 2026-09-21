@@ -26,6 +26,8 @@ class ServerWorkflowTests(unittest.TestCase):
         MODULE.SESSIONS.clear()
         MODULE.PROCESSES.clear()
         MODULE.OUTPUTS.clear()
+        MODULE.PROVIDER_SETTINGS = {}
+        MODULE.PROVIDER_API_KEY = None
         root = Path(self.temp_dir.name)
         self.config_path = root / "config.json"
         self.config_path.write_text(
@@ -48,6 +50,8 @@ class ServerWorkflowTests(unittest.TestCase):
         MODULE.SESSIONS.clear()
         MODULE.PROCESSES.clear()
         MODULE.OUTPUTS.clear()
+        MODULE.PROVIDER_SETTINGS = {}
+        MODULE.PROVIDER_API_KEY = None
         self.temp_dir.cleanup()
 
     def test_interactive_session_exposes_initial_workflow(self) -> None:
@@ -60,6 +64,60 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["workflow"]["status"], "active")
         self.assertTrue((session.run_dir / "workflow.json").is_file())
         self.assertIn("context", state)
+
+    def test_remote_provider_configuration_is_publicly_redacted_and_not_persisted(self) -> None:
+        project = Path(self.temp_dir.name) / "provider-project"
+        project.mkdir()
+        session = MODULE.InteractiveSession("chat-provider", project_path=str(project))
+        MODULE.SESSIONS[session.session_id] = session
+
+        result = MODULE.configure_provider(
+            {
+                "provider": "openai_compatible",
+                "endpoint": "https://api.example.test/v1/chat/completions",
+                "model": "beefy-model",
+                "api_key": "secret-key-that-must-not-persist",
+                "session_id": session.session_id,
+            }
+        )
+
+        self.assertTrue(result["provider"]["has_api_key"])
+        self.assertNotIn("api_key", result["provider"])
+        self.assertEqual(result["session"]["provider"]["model"], "beefy-model")
+        persisted = (session.run_dir / "config.json").read_text(encoding="utf-8")
+        self.assertNotIn("secret-key-that-must-not-persist", persisted)
+        self.assertEqual(session.state()["provider"]["provider"], "openai_compatible")
+        session.harness.release_workspace_lease()
+
+    def test_remote_run_passes_the_key_only_to_the_child_environment(self) -> None:
+        MODULE.configure_provider(
+            {
+                "provider": "openai_compatible",
+                "endpoint": "https://api.example.test/v1/chat/completions",
+                "model": "beefy-model",
+                "api_key": "secret-run-key",
+            }
+        )
+
+        class DummyProcess:
+            stdout = None
+            returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self):
+                return self.returncode
+
+        with patch.object(MODULE.subprocess, "Popen", return_value=DummyProcess()) as popen:
+            result = MODULE.start_run({"task_text": "try the remote brain", "gated": False})
+
+        command = popen.call_args.args[0]
+        environment = popen.call_args.kwargs["env"]
+        self.assertIn("--provider", command)
+        self.assertNotIn("secret-run-key", command)
+        self.assertEqual(environment["AGENT_LAB_API_KEY"], "secret-run-key")
+        self.assertEqual(result["provider"]["model"], "beefy-model")
 
     def test_interactive_session_rejects_a_second_owner_of_the_same_project(self) -> None:
         project = Path(self.temp_dir.name) / "shared-project"

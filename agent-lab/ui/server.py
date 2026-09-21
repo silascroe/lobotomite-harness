@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import re
 import subprocess
 import sys
@@ -44,6 +45,15 @@ from agent_harness import (  # noqa: E402
 )
 from approval import normalize_mode, public_request  # noqa: E402
 from tool_receipt import public_receipt  # noqa: E402
+from provider import (  # noqa: E402
+    LOCAL_PROVIDER,
+    OPENAI_COMPATIBLE_PROVIDER,
+    normalize_endpoint,
+    normalize_model,
+    normalize_provider,
+    normalize_provider_config,
+    public_provider,
+)
 from skills import (  # noqa: E402
     DEFAULT_SKILL_NAMES,
     SkillError,
@@ -76,6 +86,9 @@ PROCESSES: dict[str, subprocess.Popen[str]] = {}
 OUTPUTS: dict[str, list[str]] = {}
 SESSION_LOCK = threading.Lock()
 SESSIONS: dict[str, "InteractiveSession"] = {}
+PROVIDER_LOCK = threading.Lock()
+PROVIDER_SETTINGS: dict[str, str] = {}
+PROVIDER_API_KEY: str | None = None
 
 INTERACTIVE_SYSTEM_PROMPT = """You are a local interactive coding assistant.
 
@@ -137,6 +150,85 @@ def read_json_value(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def provider_runtime_settings(base_config: dict[str, Any] | None = None) -> tuple[dict[str, Any], str | None]:
+    config = dict(base_config) if isinstance(base_config, dict) else (read_json(CONFIG) or {})
+    with PROVIDER_LOCK:
+        overrides = dict(PROVIDER_SETTINGS)
+        configured_key = PROVIDER_API_KEY
+    if overrides:
+        config.update(overrides)
+    provider = normalize_provider(config.get("provider"))
+    config["provider"] = provider
+    if provider == OPENAI_COMPATIBLE_PROVIDER:
+        key = configured_key or os.environ.get("AGENT_LAB_API_KEY", "").strip() or None
+        return config, key
+    return config, None
+
+
+def current_provider_key() -> str | None:
+    with PROVIDER_LOCK:
+        configured_key = PROVIDER_API_KEY
+    return configured_key or os.environ.get("AGENT_LAB_API_KEY", "").strip() or None
+
+
+def provider_public_state() -> dict[str, Any]:
+    config, api_key = provider_runtime_settings()
+    return public_provider(config, has_api_key=bool(api_key))
+
+
+def configure_provider(payload: dict[str, Any]) -> dict[str, Any]:
+    global PROVIDER_API_KEY, PROVIDER_SETTINGS
+    try:
+        provider = normalize_provider(payload.get("provider"))
+    except ValueError as exc:
+        raise ApiError(str(exc)) from exc
+    base_config = read_json(CONFIG) or {}
+    if provider == LOCAL_PROVIDER:
+        config = {
+            "provider": LOCAL_PROVIDER,
+            "endpoint": str(payload.get("endpoint") or base_config.get("endpoint") or "").strip(),
+            "model": str(payload.get("model") or base_config.get("model") or "").strip(),
+        }
+        api_key = None
+    else:
+        try:
+            endpoint = normalize_endpoint(payload.get("endpoint"), provider=provider)
+            model = normalize_model(payload.get("model"), provider=provider)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from exc
+        supplied_key = payload.get("api_key")
+        if supplied_key is not None and not isinstance(supplied_key, str):
+            raise ApiError("api_key must be a string")
+        with PROVIDER_LOCK:
+            existing_key = PROVIDER_API_KEY
+        supplied_key = supplied_key.strip() if isinstance(supplied_key, str) else ""
+        api_key = supplied_key or existing_key or os.environ.get("AGENT_LAB_API_KEY", "").strip() or None
+        if not api_key:
+            raise ApiError("an API key is required for the remote provider")
+        config = {"provider": provider, "endpoint": endpoint, "model": model}
+
+    session = None
+    session_id = payload.get("session_id")
+    if session_id:
+        try:
+            session_id = validate_run_id(session_id)
+        except ApiError:
+            raise
+        with SESSION_LOCK:
+            session = SESSIONS.get(session_id)
+        if session is None:
+            raise ApiError("session not found", 404)
+        session.set_provider(config, api_key)
+
+    with PROVIDER_LOCK:
+        PROVIDER_SETTINGS = config
+        PROVIDER_API_KEY = api_key
+    return {
+        "provider": provider_public_state(),
+        "session": session.state() if session is not None else None,
+    }
 
 
 def validate_run_id(value: str) -> str:
@@ -319,6 +411,11 @@ def run_state(run_id: str) -> dict[str, Any]:
     review = review_from(run_dir, project)
     approval = approval_from(run_dir)
     tool_receipt = tool_receipt_from(run_dir)
+    try:
+        saved_provider = normalize_provider(saved_config.get("provider"))
+    except ValueError:
+        saved_provider = LOCAL_PROVIDER
+    provider = public_provider(saved_config, has_api_key=bool(current_provider_key()) if saved_provider == OPENAI_COMPATIBLE_PROVIDER else False)
     with PROCESS_LOCK:
         process = PROCESSES.get(run_id)
         output = list(OUTPUTS.get(run_id, []))
@@ -351,6 +448,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "review": review,
         "approval": approval,
         "tool_receipt": tool_receipt,
+        "provider": provider,
         "workspace_lock": summary.get("workspace_lock") or progress.get("workspace_lock") or {"status": "unknown"},
         "skills": summary.get("skills", {}),
         "model": summary.get("model", ""),
@@ -383,6 +481,7 @@ def run_summaries() -> list[dict[str, Any]]:
                 "review": state.get("review", {}),
                 "approval": state.get("approval", {}),
                 "tool_receipt": state.get("tool_receipt", {}),
+                "provider": state.get("provider", {}),
                 "workspace_lock": state.get("workspace_lock", {}),
                 "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
@@ -503,6 +602,14 @@ class InteractiveSession:
         if config is None:
             raise ApiError("could not read harness config", 500)
         config = dict(config)
+        if resume:
+            try:
+                persisted_provider = normalize_provider(config.get("provider"))
+            except ValueError as exc:
+                raise ApiError(str(exc)) from exc
+            runtime_api_key = current_provider_key() if persisted_provider == OPENAI_COMPATIBLE_PROVIDER else None
+        else:
+            config, runtime_api_key = provider_runtime_settings(config)
         if resume and reasoning_level is None:
             persisted_reasoning = persisted.get("reasoning") if isinstance(persisted, dict) else None
             if isinstance(persisted_reasoning, dict) and persisted_reasoning.get("level"):
@@ -552,6 +659,7 @@ class InteractiveSession:
             template_dir=None,
             system_prompt=INTERACTIVE_SYSTEM_PROMPT,
             workspace_kind="session",
+            runtime_api_key=runtime_api_key,
         )
         if resume:
             self._restore_from_disk(persisted or {})
@@ -687,6 +795,7 @@ class InteractiveSession:
                 "approval": self.harness.approval_view(),
                 "tool_receipt": self.harness.tool_receipt_view(),
                 "workspace_lock": self.harness.workspace_lock_view(),
+                "provider": self.harness.provider_metadata(),
                 "recovery": self.harness.recovery.snapshot(),
                 "skills": self.harness.skill_metadata(),
                 "skill_overrides": self.harness.config.get("skill_overrides", {}),
@@ -722,6 +831,7 @@ class InteractiveSession:
             "approval": self.harness.approval_view(),
             "tool_receipt": self.harness.tool_receipt_view(),
             "workspace_lock": self.harness.workspace_lock_view(),
+            "provider": self.harness.provider_metadata(),
             "recovery": self.harness.recovery.snapshot(),
             "skills": self.harness.skill_metadata(),
             "conversation": conversation,
@@ -878,6 +988,21 @@ class InteractiveSession:
             self.harness.approval_mode = normalized
             self.harness.config["approval_mode"] = normalized
             self.harness.logger.event("settings_updated", approval_mode=normalized)
+        self.save_meta()
+
+    def set_provider(self, settings: dict[str, Any], api_key: str | None) -> None:
+        with self.lock:
+            if self.busy:
+                raise ApiError("wait for the current message to finish before changing providers", 409)
+            next_config = dict(self.harness.config)
+            next_config.update(settings)
+            try:
+                normalized = normalize_provider_config(next_config)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from exc
+            self.harness.config = normalized
+            self.harness.runtime_api_key = str(api_key or "").strip() or None
+            self.harness.logger.event("settings_updated", provider=self.harness.provider_metadata())
         self.save_meta()
 
     def add_assistant_message(self, content: str) -> None:
@@ -1169,6 +1294,13 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
             reasoning_level = normalize_reasoning_level(reasoning_level)
         except ValueError as exc:
             raise ApiError(str(exc)) from exc
+    provider_config, api_key = provider_runtime_settings()
+    try:
+        provider_config = normalize_provider_config(provider_config)
+    except ValueError as exc:
+        raise ApiError(str(exc)) from exc
+    if provider_config.get("provider") == OPENAI_COMPATIBLE_PROVIDER and not api_key:
+        raise ApiError("the remote provider is selected but no API key is configured")
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     project_path = normalize_project_path(payload.get("project_path"), RUNS_DIR / run_id / "project")
     skill_overrides = payload.get("skill_overrides")
@@ -1195,7 +1327,16 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
     if skill_overrides is not None:
         command.extend(["--skill-overrides-json", json.dumps(skill_overrides, ensure_ascii=False)])
     command.extend(["--approval-mode", approval_mode])
+    command.extend(["--provider", provider_config["provider"]])
+    if provider_config.get("endpoint"):
+        command.extend(["--endpoint", str(provider_config["endpoint"])])
+    if provider_config.get("model"):
+        command.extend(["--model", str(provider_config["model"])])
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    environment = None
+    if provider_config.get("provider") == OPENAI_COMPATIBLE_PROVIDER:
+        environment = os.environ.copy()
+        environment["AGENT_LAB_API_KEY"] = str(api_key)
     try:
         process = subprocess.Popen(
             command,
@@ -1207,6 +1348,7 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
             errors="replace",
             bufsize=1,
             creationflags=creation_flags,
+            env=environment,
         )
     except OSError as exc:
         raise ApiError(f"could not start harness: {exc}", 500) from exc
@@ -1220,6 +1362,7 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         "project": str(project_path),
         "skills": public_selection(skill_selection),
         "approval_mode": approval_mode,
+        "provider": public_provider(provider_config, has_api_key=bool(api_key)),
     }
 
 
@@ -1238,10 +1381,22 @@ def resume_run(run_id: str, approval_decision: str | None = None) -> dict[str, A
         existing = PROCESSES.get(run_id)
         if existing is not None and existing.poll() is None:
             raise ApiError("run is already active", 409)
+    persisted_config = read_json(resolve_inside(RUNS_DIR, run_id) / "config.json") or {}
+    try:
+        persisted_config = normalize_provider_config(persisted_config)
+    except ValueError as exc:
+        raise ApiError(str(exc)) from exc
+    api_key = current_provider_key() if persisted_config.get("provider") == OPENAI_COMPATIBLE_PROVIDER else None
+    if persisted_config.get("provider") == OPENAI_COMPATIBLE_PROVIDER and not api_key:
+        raise ApiError("this run uses a remote provider; configure its API key before resuming")
     command = [sys.executable, str(HARNESS), "--resume-run", run_id]
     if approval_decision is not None:
         command.extend(["--approval-decision", approval_decision])
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    environment = None
+    if persisted_config.get("provider") == OPENAI_COMPATIBLE_PROVIDER:
+        environment = os.environ.copy()
+        environment["AGENT_LAB_API_KEY"] = str(api_key)
     try:
         process = subprocess.Popen(
             command,
@@ -1253,6 +1408,7 @@ def resume_run(run_id: str, approval_decision: str | None = None) -> dict[str, A
             errors="replace",
             bufsize=1,
             creationflags=creation_flags,
+            env=environment,
         )
     except OSError as exc:
         raise ApiError(f"could not resume harness: {exc}", 500) from exc
@@ -1331,6 +1487,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_static(path.lstrip("/"))
             if path == "/api/health":
                 return self.send_json({"status": "ok", "local_only": True})
+            if path == "/api/provider":
+                return self.send_json({"provider": provider_public_state()})
             if path == "/api/reasoning-levels":
                 return self.send_json({"levels": reasoning_options()})
             if path == "/api/skills":
@@ -1397,6 +1555,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw.decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ApiError("request body must be a JSON object")
+            if parsed.path == "/api/provider":
+                return self.send_json(configure_provider(payload))
             if parsed.path == "/api/runs":
                 return self.send_json(start_run(payload), 202)
             if parsed.path.startswith("/api/runs/"):

@@ -1017,6 +1017,7 @@ dialog::backdrop { background: rgba(4, 6, 10, .72); backdrop-filter: blur(3px); 
 
 .modal input[type="text"],
 .modal input[type="search"],
+.modal input[type="password"],
 .modal select,
 .modal textarea {
   width: 100%;
@@ -1027,11 +1028,17 @@ dialog::backdrop { background: rgba(4, 6, 10, .72); backdrop-filter: blur(3px); 
 }
 .modal input[type="text"],
 .modal input[type="search"],
+.modal input[type="password"],
 .modal select { height: 40px; padding: 0 11px; }
 .modal textarea { min-height: 190px; resize: vertical; padding: 12px; line-height: 1.55; }
 .modal input:focus,
 .modal select:focus,
 .modal textarea:focus { border-color: var(--iris); box-shadow: 0 0 0 3px color-mix(in srgb, var(--iris) 12%, transparent); }
+
+.provider-fields { display: grid; gap: 10px; margin-top: 16px; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--steel) 55%, transparent); }
+.provider-fields[hidden] { display: none; }
+.form-hint { color: var(--slate-dim); font: 10px/1.5 var(--mono-font); }
+.provider-modal { width: min(560px, calc(100vw - 28px)); }
 .mono-input { font-family: var(--mono-font) !important; font-size: 10px !important; }
 .inline-form { display: flex; align-items: end; gap: 9px; margin-top: 13px; }
 .grow { min-width: 0; flex: 1; margin: 0 !important; }

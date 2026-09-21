@@ -7,6 +7,7 @@ const state = {
   sessionFilter: "",
   reasoningLevel: "standard",
   approvalMode: "auto",
+  provider: { provider: "local", label: "Local model", endpoint: "", model: "", has_api_key: false },
   reasoningOptions: [],
   skills: [],
   skillDefaults: [],
@@ -53,6 +54,7 @@ function openModal(dialogId, triggerId) {
       $("skillSummary").textContent = `Skill catalog unavailable: ${error.message}`;
     });
   }
+  if (dialogId === "providerDialog") syncProviderDialog();
   if (!dialog.open) dialog.showModal();
   if (dialogId === "workspaceDialog") $("mobileWorkspaceButton").setAttribute("aria-expanded", "true");
 }
@@ -206,6 +208,55 @@ function renderApprovalControl(record = state.activeRecord) {
   state.approvalMode = mode;
   select.value = mode;
   hint.textContent = mode === "confirm" ? "Ask before edits" : "Autonomous tools";
+}
+
+function normalizeProvider(value) {
+  return value === "openai_compatible" ? "openai_compatible" : "local";
+}
+
+function providerForRecord(record = state.activeRecord) {
+  const value = record?.provider || state.provider || {};
+  return {
+    provider: normalizeProvider(value.provider),
+    label: value.label || (normalizeProvider(value.provider) === "local" ? "Local model" : "OpenAI API"),
+    endpoint: String(value.endpoint || ""),
+    model: String(value.model || ""),
+    has_api_key: Boolean(value.has_api_key),
+  };
+}
+
+function renderProviderControl(record = state.activeRecord) {
+  const value = providerForRecord(record);
+  const label = $("providerLabel");
+  const button = $("providerButton");
+  if (label) label.textContent = value.provider === "local" ? "Local" : "API";
+  if (button) button.title = value.provider === "local" ? "Using the local model" : `Using ${value.model || "the remote API"}`;
+}
+
+function syncProviderDialog() {
+  const value = providerForRecord();
+  const type = $("providerType");
+  const fields = $("remoteProviderFields");
+  const endpoint = $("providerEndpoint");
+  const model = $("providerModel");
+  const key = $("providerApiKey");
+  const hint = $("providerKeyHint");
+  const status = $("providerStatus");
+  if (!type || !fields || !endpoint || !model || !key || !hint || !status) return;
+  type.value = value.provider;
+  fields.hidden = value.provider !== "openai_compatible";
+  endpoint.value = value.endpoint || "https://api.openai.com/v1/chat/completions";
+  model.value = value.model || "";
+  key.value = "";
+  key.placeholder = value.has_api_key ? "Key already loaded; leave blank to keep it" : "Paste a key for this session only";
+  hint.textContent = value.has_api_key
+    ? "A key is already loaded in memory. Leave this blank to keep it, or paste a replacement."
+    : "The key stays in memory while this Agent Lab process is running. It is never written to the project, transcript, or Git.";
+  status.textContent = value.provider === "local"
+    ? "Local model selected. The next chat or run stays on this machine."
+    : value.has_api_key
+      ? "Remote model selected. The key is loaded in memory."
+      : "Remote model selected. Add a key before using it.";
 }
 
 async function api(path, options = {}) {
@@ -680,6 +731,7 @@ function renderInspector(record = state.activeRecord) {
   const skillNames = Array.isArray(skills.resolved) ? skills.resolved.map((item) => item.name).filter(Boolean) : [];
   const workspaceLock = record?.workspace_lock || {};
   const toolReceipt = record?.tool_receipt || {};
+  const provider = providerForRecord(record);
   const receiptLabel = toolReceipt.status === "completed"
     ? "Completed; awaiting transcript settlement"
     : toolReceipt.status === "unknown"
@@ -691,10 +743,12 @@ function renderInspector(record = state.activeRecord) {
           : "None";
   renderReasoningControl(record);
   renderApprovalControl(record);
+  renderProviderControl(record);
   $("inspectorContent").innerHTML = [
     detailRow(state.activeKind === "run" ? "Run ID" : "Session ID", escapeText(id), "mono-value"),
     detailRow("Status", `<span class="status-inline"><span class="status-dot" aria-hidden="true"></span>${escapeText(statusLabel(status))}</span>`),
     detailRow("Model", escapeText(model)),
+    detailRow("Provider", escapeText(provider.provider === "local" ? "Local model" : `${provider.label} · ${provider.model || "model not set"}`)),
     detailRow("Reasoning", escapeText(reasoningLabel)),
     detailRow("Tool approvals", escapeText(normalizeApprovalMode(record?.approval_mode || state.approvalMode) === "confirm" ? "Ask before edits" : "Autonomous")),
     detailRow("Tool receipt", escapeText(receiptLabel), "muted-value"),
@@ -1332,6 +1386,57 @@ async function loadReasoningLevels() {
   renderReasoningControl();
 }
 
+async function loadProvider() {
+  try {
+    const data = await api("/api/provider");
+    state.provider = data.provider || state.provider;
+  } catch (error) {
+    // Keep the local default visible if an older server does not expose provider settings yet.
+  }
+  renderProviderControl();
+}
+
+function changeProviderType() {
+  const next = normalizeProvider($("providerType").value);
+  const fields = $("remoteProviderFields");
+  if (fields) fields.hidden = next !== "openai_compatible";
+  const status = $("providerStatus");
+  if (status) status.textContent = next === "local"
+    ? "Local model selected. The next chat or run stays on this machine."
+    : "Remote model selected. Enter an endpoint, model name, and API key.";
+}
+
+async function saveProvider() {
+  const button = $("saveProviderButton");
+  const provider = normalizeProvider($("providerType").value);
+  const payload = {
+    provider,
+    endpoint: $("providerEndpoint").value.trim(),
+    model: $("providerModel").value.trim(),
+    api_key: $("providerApiKey").value,
+  };
+  if (state.activeKind === "session" && state.activeSession) payload.session_id = state.activeSession;
+  if (button) button.disabled = true;
+  try {
+    const result = await api("/api/provider", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    state.provider = result.provider || state.provider;
+    renderProviderControl(result.session || state.activeRecord);
+    if (result.session) renderSession(result.session);
+    closeModal("providerDialog");
+    const scope = result.session ? "this chat and new runs" : "new chats and runs";
+    setWorkspaceNotice(`${provider === "local" ? "Local model" : "Remote API"} selected for ${scope}.`, "success");
+  } catch (error) {
+    $("providerStatus").textContent = error.message;
+    setWorkspaceNotice(`Could not configure the model provider: ${error.message}`, "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function closeMobileSidebar() {
   if (window.innerWidth > 760) return;
   $("layout").classList.remove("sidebar-open");
@@ -1383,6 +1488,9 @@ $("stopJobButton").addEventListener("click", stopJob);
 $("retryJobButton").addEventListener("click", retryJob);
 $("reasoningLevel").addEventListener("change", changeReasoningLevel);
 $("approvalMode").addEventListener("change", changeApprovalMode);
+$("providerButton").addEventListener("click", () => openModal("providerDialog", "providerButton"));
+$("providerType").addEventListener("change", changeProviderType);
+$("saveProviderButton").addEventListener("click", saveProvider);
 $("approveJobButton").addEventListener("click", () => resolveJobApproval("approve"));
 $("denyJobButton").addEventListener("click", () => resolveJobApproval("deny"));
 $("workspacePath").addEventListener("input", updateWorkspaceSummary);
@@ -1460,11 +1568,15 @@ $("runsModeButton").addEventListener("click", () => setMode("runs"));
 }));
 $("workspaceDialog").addEventListener("close", () => restoreModalFocus("workspaceDialog"));
 $("runDialog").addEventListener("close", () => restoreModalFocus("runDialog"));
+$("providerDialog").addEventListener("close", () => restoreModalFocus("providerDialog"));
 $("workspaceDialog").addEventListener("click", (event) => {
   if (event.target === $("workspaceDialog")) closeModal("workspaceDialog");
 });
 $("runDialog").addEventListener("click", (event) => {
   if (event.target === $("runDialog")) closeModal("runDialog");
+});
+$("providerDialog").addEventListener("click", (event) => {
+  if (event.target === $("providerDialog")) closeModal("providerDialog");
 });
 $("closeFilePreview").addEventListener("click", closeFilePreview);
 document.addEventListener("keydown", (event) => {
@@ -1477,7 +1589,7 @@ async function bootstrap() {
   try {
     await loadProjects();
     await loadSkills($("workspacePath").value.trim());
-    await Promise.all([loadReasoningLevels(), loadTasks(), loadRuns(), loadSessions()]);
+    await Promise.all([loadReasoningLevels(), loadProvider(), loadTasks(), loadRuns(), loadSessions()]);
   } catch (error) {
     $("launchNote").textContent = error.message;
   }

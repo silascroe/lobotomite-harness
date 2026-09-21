@@ -152,6 +152,66 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertNotIn("reasoning_content", result)
         self.assertTrue(result["reasoning_present"])
 
+    def test_remote_provider_uses_ephemeral_auth_without_persisting_the_key(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "remote-provider-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="remote provider task",
+            config={
+                "provider": "openai_compatible",
+                "endpoint": "https://api.example.test/v1/chat/completions",
+                "model": "beefy-model",
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+            runtime_api_key="secret-key-that-must-not-persist",
+        )
+        harness.prepare()
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": '{"action":"finish","args":{"status":"success"}}',
+                                }
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        captured: dict[str, object] = {}
+
+        def fake_urlopen(request: object, timeout: int) -> FakeResponse:
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        with patch.object(MODULE.urllib.request, "urlopen", side_effect=fake_urlopen):
+            result = harness.call_model()
+
+        request = captured["request"]
+        self.assertEqual(request.get_header("Authorization"), "Bearer secret-key-that-must-not-persist")
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["model"], "beefy-model")
+        self.assertNotIn("api_key", payload)
+        self.assertEqual(result["provider"], "openai_compatible")
+        persisted_config = (run_dir / "config.json").read_text(encoding="utf-8")
+        self.assertNotIn("secret-key-that-must-not-persist", persisted_config)
+        harness.release_workspace_lease()
+
     def test_interrupted_run_can_restore_snapshot_transcript_and_progress(self) -> None:
         root = Path(self.temp_dir.name)
         run_dir = root / "resume-run"

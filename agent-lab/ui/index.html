@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Agent Lab</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260920-studio-8">
-  <link rel="stylesheet" href="styles.css?v=20260920-skills-1">
+  <link rel="stylesheet" href="styles.css?v=20260921-provider-1">
 </head>
 <body>
   <div class="app-shell">
@@ -49,6 +49,10 @@
           </select>
           <small id="approvalHint">Autonomous tools</small>
         </label>
+        <button id="providerButton" class="header-button" type="button" aria-controls="providerDialog" aria-haspopup="dialog" title="Choose the model provider">
+          <span class="button-glyph" aria-hidden="true">◈</span>
+          <span id="providerLabel">Local</span>
+        </button>
         <div id="runStatus" class="status-badge idle" role="status">
           <span class="status-dot" aria-hidden="true"></span>
           <span>Ready</span>
@@ -414,6 +418,41 @@
     </form>
   </dialog>
 
-  <script src="app.js?v=20260920-skills-1"></script>
+  <dialog id="providerDialog" class="modal" aria-labelledby="providerDialogTitle">
+    <form method="dialog" class="modal-shell provider-modal">
+      <header class="modal-header">
+        <div>
+          <p>Model connection</p>
+          <h2 id="providerDialogTitle">Choose the brain</h2>
+        </div>
+        <button id="closeProviderDialog" class="icon-button" type="submit" value="cancel" aria-label="Close model connection">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-intro">The local model remains the default. An API provider runs through the same workspace, tools, workflow gates, approvals, and crash recovery.</p>
+        <label for="providerType">Provider</label>
+        <select id="providerType">
+          <option value="local">Local model</option>
+          <option value="openai_compatible">OpenAI-compatible API</option>
+        </select>
+
+        <section id="remoteProviderFields" class="provider-fields" hidden>
+          <label for="providerEndpoint">Chat completions endpoint</label>
+          <input id="providerEndpoint" type="url" spellcheck="false" autocomplete="url" placeholder="https://api.openai.com/v1/chat/completions">
+          <label for="providerModel">Model name</label>
+          <input id="providerModel" type="text" spellcheck="false" autocomplete="off" placeholder="gpt-5.6">
+          <label for="providerApiKey">API key</label>
+          <input id="providerApiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="Paste a key for this session only">
+          <small id="providerKeyHint" class="form-hint">The key stays in memory while this Agent Lab process is running. It is never written to the project, transcript, or Git.</small>
+        </section>
+        <div id="providerStatus" class="workspace-status" role="status">Local model selected.</div>
+      </div>
+      <footer class="modal-footer">
+        <button class="text-button" type="submit" value="cancel">Cancel</button>
+        <button id="saveProviderButton" class="primary-button" type="button">Use provider</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <script src="app.js?v=20260921-provider-1"></script>
 </body>
 </html>

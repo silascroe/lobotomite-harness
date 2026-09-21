@@ -81,6 +81,16 @@ test("tool approval controls expose durable confirm and resume actions", () => {
   assert.match(css, /\.approval-job/);
 });
 
+test("provider controls keep remote API credentials behind an explicit connection flow", () => {
+  for (const id of ["providerButton", "providerDialog", "providerType", "providerEndpoint", "providerModel", "providerApiKey", "saveProviderButton"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `missing #${id}`);
+  }
+  assert.match(app, /function saveProvider\(/);
+  assert.match(app, /\/api\/provider/);
+  assert.match(html, /never written to the project, transcript, or Git/);
+  assert.match(css, /\.provider-fields/);
+});
+
 test("recovery events have readable activity copy", () => {
   assert.match(app, /case "recovery_retry"/);
   assert.match(app, /case "recovery_duplicate_action"/);

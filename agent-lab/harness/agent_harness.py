@@ -46,6 +46,7 @@ from review import build_review_packet, fingerprint, review_status
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 from workspace_lock import WorkspaceBusyError, WorkspaceLease, acquire as acquire_workspace_lease, read_lock
 from tool_receipt import complete_receipt, mark_unknown, new_receipt, public_receipt, settle_receipt
+from provider import OPENAI_COMPATIBLE_PROVIDER, normalize_provider_config, public_provider
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -587,13 +588,18 @@ class AgentHarness:
         template_dir: Path | None,
         system_prompt: str | None = None,
         workspace_kind: str = "run",
+        runtime_api_key: str | None = None,
     ) -> None:
         self.task = task
-        self.config = config
+        try:
+            self.config = normalize_provider_config(config)
+        except ValueError as exc:
+            raise HarnessError(str(exc)) from exc
         self.run_dir = run_dir
         self.project_dir = project_dir
         self.template_dir = template_dir
         self.workspace_kind = str(workspace_kind or "run")
+        self.runtime_api_key = str(runtime_api_key or "").strip() or None
         self.workspace_lease: WorkspaceLease | None = None
         self.system_prompt = system_prompt or SYSTEM_PROMPT
         self.logger = RunLogger(run_dir / "events.jsonl")
@@ -709,6 +715,10 @@ class AgentHarness:
 
     def reasoning_metadata(self) -> dict[str, Any]:
         return reasoning_settings(self.config)
+
+    def provider_metadata(self) -> dict[str, Any]:
+        configured_key = self.runtime_api_key or os.environ.get("AGENT_LAB_API_KEY", "")
+        return public_provider(self.config, has_api_key=bool(configured_key))
 
     def model_messages(self) -> list[dict[str, Any]]:
         result = build_context(
@@ -1660,6 +1670,7 @@ class AgentHarness:
         endpoint = str(self.config.get("endpoint", "")).strip()
         if not endpoint:
             raise HarnessError("config endpoint is empty")
+        provider = str(self.config.get("provider", "local"))
         reasoning = reasoning_settings(self.config)
         payload = {
             "model": self.config.get("model", "local-model"),
@@ -1671,14 +1682,27 @@ class AgentHarness:
             "reasoning_budget_tokens": reasoning["budget"],
             "chat_template_kwargs": {"enable_thinking": reasoning["enabled"]},
         }
-        if reasoning["profile"] == "gemma" and reasoning["enabled"]:
-            payload["reasoning_format"] = "deepseek"
-        if bool(self.config.get("reasoning_effort_supported", False)):
-            payload["reasoning_effort"] = reasoning["effort"]
+        headers = {"Content-Type": "application/json"}
+        if provider == OPENAI_COMPATIBLE_PROVIDER:
+            api_key = self.runtime_api_key or os.environ.get("AGENT_LAB_API_KEY", "").strip()
+            if not api_key:
+                raise HarnessError("the remote provider is selected but no API key is configured")
+            headers["Authorization"] = f"Bearer {api_key}"
+            payload.pop("reasoning_budget_tokens", None)
+            payload.pop("chat_template_kwargs", None)
+            if reasoning["profile"] == "gemma" and reasoning["enabled"]:
+                payload.pop("reasoning_format", None)
+            if bool(self.config.get("reasoning_effort_supported", False)):
+                payload["reasoning_effort"] = reasoning["effort"]
+        else:
+            if reasoning["profile"] == "gemma" and reasoning["enabled"]:
+                payload["reasoning_format"] = "deepseek"
+            if bool(self.config.get("reasoning_effort_supported", False)):
+                payload["reasoning_effort"] = reasoning["effort"]
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
@@ -1686,6 +1710,9 @@ class AgentHarness:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            api_key = self.runtime_api_key or os.environ.get("AGENT_LAB_API_KEY", "").strip()
+            if api_key:
+                detail = detail.replace(api_key, "[redacted]")
             raise HarnessError(f"model endpoint returned HTTP {exc.code}: {clip(detail, 1000)}") from exc
         except urllib.error.URLError as exc:
             raise HarnessError(f"could not reach model endpoint {endpoint}: {exc.reason}") from exc
@@ -1695,8 +1722,14 @@ class AgentHarness:
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise HarnessError(f"model endpoint returned an unexpected response: {clip(raw, 1000)}") from exc
         content = message.get("content") or ""
+        if isinstance(content, list):
+            content = "".join(
+                str(item.get("text") or "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
         result = {
             "content": content,
+            "provider": provider,
             "reasoning_present": bool(message.get("reasoning_content")),
             "finish_reason": response_data.get("choices", [{}])[0].get("finish_reason"),
             "usage": response_data.get("usage", {}),
@@ -1746,6 +1779,7 @@ class AgentHarness:
                 "approval": self.approval_view(),
                 "tool_receipt": self.tool_receipt_view(),
                 "workspace_lock": self.workspace_lock_view(),
+                "provider": self.provider_metadata(),
                 "recovery": self.recovery.snapshot(),
                 "blocked_reason": self.blocked_reason,
                 "workflow": self.workflow,
@@ -1822,6 +1856,7 @@ class AgentHarness:
             "approval": self.approval_view(),
             "tool_receipt": self.tool_receipt_view(),
             "workspace_lock": self.workspace_lock_view(),
+            "provider": self.provider_metadata(),
             "skills": self.skill_metadata(),
             "recovery": self.recovery.snapshot(),
             "blocked_reason": self.blocked_reason,
@@ -2127,6 +2162,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", type=ensure_run_id)
     parser.add_argument("--template", type=Path)
     parser.add_argument("--project-dir", type=Path, help="use this existing or newly created directory as the project workspace")
+    parser.add_argument("--provider", choices=("local", "openai_compatible"), help="model provider")
+    parser.add_argument("--endpoint", help="override the model chat-completions endpoint")
+    parser.add_argument("--model", help="override the model name")
     parser.add_argument("--reasoning-level", choices=tuple(REASONING_LEVELS), help="override the configured reasoning level")
     parser.add_argument("--approval-mode", choices=("auto", "confirm"), help="whether mutating tools need operator approval")
     parser.add_argument("--skill-overrides-json", help="JSON object containing per-task enabled and disabled skill names")
@@ -2168,6 +2206,15 @@ def main() -> int:
     if args.approval_mode is not None:
         config = dict(config)
         config["approval_mode"] = args.approval_mode
+    if args.provider is not None:
+        config = dict(config)
+        config["provider"] = args.provider
+    if args.endpoint is not None:
+        config = dict(config)
+        config["endpoint"] = args.endpoint
+    if args.model is not None:
+        config = dict(config)
+        config["model"] = args.model
     if args.skill_overrides_json is not None:
         try:
             skill_overrides = json.loads(args.skill_overrides_json)

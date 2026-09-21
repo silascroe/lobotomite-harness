@@ -93,6 +93,20 @@ The launcher keeps E4B as its default for backwards compatibility and reports th
 
 The harness also exposes a model-aware reasoning selector: `off`, `low`, `standard`, `deep`, and `max`. The Agent Lab console applies the selected level to the next interactive message and to newly launched runs. Levels are translated into per-request thinking budgets and output caps; Gemma uses `enable_thinking` plus `reasoning_budget_tokens`, while Qwen also receives its `/think` or `/no_think` template marker. The selector is an abstraction, not a promise that every model supports the same native reasoning semantics.
 
+### Optional API provider
+
+The local model is still the default, but the header's Model control can switch the same harness to an OpenAI-compatible chat-completions endpoint. Enter the endpoint, model name, and API key; the next chat or run keeps the same project workspace, tools, workflow, approvals, receipts, and recovery logic while using the remote model. The key is held only in the running UI process (or the child run's environment), is never placed in `config.json`, transcripts, summaries, activity events, or Git, and disappears when the process stops. The UI reports only whether a key is loaded.
+
+For a CLI experiment, set `AGENT_LAB_API_KEY` in the current PowerShell session and override the provider without editing the checked-in config:
+
+```powershell
+$py = 'C:\Users\ringd\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+$env:AGENT_LAB_API_KEY = 'paste-key-here'
+& $py agent-lab/harness/agent_harness.py -TaskText 'Inspect the project and report back.' -Provider openai_compatible -Endpoint 'https://api.openai.com/v1/chat/completions' -Model 'your-model' -NoGates
+```
+
+Do not paste a real key into a task, issue, transcript, or committed file. A remote model is an experiment switch, not a replacement for the local-first safety boundary.
+
 ### Native workflow checkpoints
 
 Agent Lab has a small workflow layer inspired by the useful operational parts of modern coding-agent harnesses, implemented locally in `agent-lab/harness/workflow.py`. Each run and chat starts at `intake` and can move through `inspect`, `design`, `plan`, `implement`, `verify`, `review`, and `complete`; failed work stays observable and can return to `implement` for repair. A concrete blocker is represented separately as `blocked`.
