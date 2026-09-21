@@ -1278,7 +1278,7 @@ class AgentHarness:
         content = message.get("content") or ""
         result = {
             "content": content,
-            "reasoning_content": message.get("reasoning_content") or "",
+            "reasoning_present": bool(message.get("reasoning_content")),
             "finish_reason": response_data.get("choices", [{}])[0].get("finish_reason"),
             "usage": response_data.get("usage", {}),
             "reasoning_level": reasoning["level"],

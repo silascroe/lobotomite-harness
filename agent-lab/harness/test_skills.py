@@ -37,6 +37,12 @@ class SkillRegistryTests(unittest.TestCase):
         self.assertTrue(all(item["source"] == "builtin" for item in selection["resolved"]))
         self.assertTrue(all(item["content_hash"] for item in selection["resolved"]))
 
+    def test_optional_operator_skills_are_available_without_becoming_defaults(self) -> None:
+        names = {item["name"] for item in list_skills()}
+
+        self.assertTrue({"test-driven-changes", "systematic-debugging", "review-before-finish"} <= names)
+        self.assertEqual(list(DEFAULT_SKILL_NAMES), ["inspect-and-plan", "verify-before-finish"])
+
     def test_project_skill_is_discoverable_but_not_selected_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)

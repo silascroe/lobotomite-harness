@@ -205,12 +205,19 @@ def find_skills(
     normalized_source = _clean_text(source, "source", 20).lower()
     if normalized_source == "local":
         terms = [term for term in re.split(r"\s+", text) if term]
-        matches: list[dict[str, Any]] = []
-        for item in list_skills(project_dir):
-            haystack = " ".join((item["name"], item["description"], item["content"])).lower()
+        matches: list[tuple[tuple[int, int], dict[str, Any]]] = []
+        for index, item in enumerate(list_skills(project_dir)):
+            name = item["name"].lower()
+            description = item["description"].lower()
+            content = item["content"].lower()
+            haystack = " ".join((name, description, content))
             if all(term in haystack for term in terms):
-                matches.append(public_skill(item))
-        return matches
+                field_score = sum(
+                    0 if term in name else 1 if term in description else 2
+                    for term in terms
+                )
+                matches.append(((field_score, index), public_skill(item)))
+        return [item for _score, item in sorted(matches, key=lambda value: value[0])]
     if normalized_source != "remote":
         raise SkillError("skill discovery source must be local or remote")
     if not allow_remote:

@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).with_name("agent_harness.py")
@@ -93,6 +94,50 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertLessEqual(harness.context_metadata["after_tokens"], 180)
         self.assertIn("context_compacted", (run_dir / "events.jsonl").read_text(encoding="utf-8"))
         self.assertLess(len(request_messages), len(original_messages))
+
+    def test_model_response_metadata_does_not_persist_raw_reasoning_content(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "reasoning-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="reasoning task",
+            config={
+                "endpoint": "http://model.invalid/v1/chat/completions",
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": '{"action":"finish","args":{"status":"success"}}',
+                                    "reasoning_content": "PRIVATE-REASONING-MUST-NOT-LEAK",
+                                }
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        with patch.object(MODULE.urllib.request, "urlopen", return_value=FakeResponse()):
+            result = harness.call_model()
+
+        self.assertNotIn("reasoning_content", result)
+        self.assertTrue(result["reasoning_present"])
 
     def test_selected_skills_are_injected_without_unused_skill_text(self) -> None:
         harness = MODULE.AgentHarness(
