@@ -130,8 +130,16 @@ The static-page checker is deliberately outside the agent project so the model c
 
 Non-interactive runs also checkpoint `transcript.json` and `progress.json` after each turn and tool observation. If the UI process is restarted before `summary.json` is written, the run is shown as interrupted with its last durable turn, call counts, workflow, and context metadata instead of being mislabeled as an empty aborted run.
 
+Interrupted benchmark runs are resumable. Each run keeps an immutable `initial-project/` snapshot plus `initial-snapshot.json`, restores its transcript, workflow evidence, recovery state, and last checkpoint, and can continue from the last completed turn with:
+
 ```powershell
 $py = 'C:\Users\ringd\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+& $py agent-lab/harness/agent_harness.py --resume-run run-001
+```
+
+The console exposes the same operation as `Resume run` when an interrupted record is selected. Resuming gives the worker a fresh configured turn budget while preserving the existing project and audit trail; terminal records are intentionally not restartable.
+
+```powershell
 & $py agent-lab/checks/check_static_page.py agent-lab/runs/run-001/project
 ```
 

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 HARNESS_DIR = Path(__file__).resolve().parents[1] / "harness"
@@ -23,6 +24,8 @@ class ServerWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         MODULE.SESSIONS.clear()
+        MODULE.PROCESSES.clear()
+        MODULE.OUTPUTS.clear()
         root = Path(self.temp_dir.name)
         self.config_path = root / "config.json"
         self.config_path.write_text(
@@ -43,6 +46,8 @@ class ServerWorkflowTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         MODULE.SESSIONS.clear()
+        MODULE.PROCESSES.clear()
+        MODULE.OUTPUTS.clear()
         self.temp_dir.cleanup()
 
     def test_interactive_session_exposes_initial_workflow(self) -> None:
@@ -180,6 +185,52 @@ class ServerWorkflowTests(unittest.TestCase):
 
         self.assertEqual(state["status"], "interrupted")
         self.assertEqual(state["progress"]["turn"], 4)
+
+    def test_resume_run_launches_only_an_interrupted_record(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-resume"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (run_dir / "progress.json").write_text(
+            json.dumps({"status": "running", "turn": 4, "checkpoint": "tool_result"}),
+            encoding="utf-8",
+        )
+
+        class DummyProcess:
+            stdout = None
+            returncode = None
+
+            def poll(self):
+                return None
+
+            def wait(self):
+                self.returncode = 0
+                return 0
+
+        process = DummyProcess()
+        with patch.object(MODULE.subprocess, "Popen", return_value=process) as popen:
+            result = MODULE.resume_run("run-resume")
+
+        self.assertTrue(result["resumed"])
+        self.assertEqual(result["status"], "running")
+        command = popen.call_args.args[0]
+        self.assertIn("--resume-run", command)
+        self.assertIn("run-resume", command)
+
+    def test_resume_run_rejects_terminal_records(self) -> None:
+        run_dir = MODULE.RUNS_DIR / "run-terminal"
+        project_dir = run_dir / "project"
+        project_dir.mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (run_dir / "workspace.json").write_text(json.dumps({"project": str(project_dir)}), encoding="utf-8")
+        (run_dir / "progress.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+        (run_dir / "summary.json").write_text(json.dumps({"status": "success"}), encoding="utf-8")
+
+        with self.assertRaises(MODULE.ApiError) as raised:
+            MODULE.resume_run("run-terminal")
+
+        self.assertEqual(raised.exception.status, 409)
 
     def test_rehydrate_session_restores_context_and_clears_stale_busy_state(self) -> None:
         session_dir = MODULE.SESSION_DIR / "chat-restore"
@@ -385,6 +436,37 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(response.status, 202)
         self.assertEqual(payload["status"], "thinking")
         self.assertEqual(payload["job"]["attempt"], 2)
+
+    def test_resume_endpoint_routes_to_the_run_resumer(self) -> None:
+        from http.client import HTTPConnection
+        import threading
+
+        http_server = MODULE.ThreadingHTTPServer(("127.0.0.1", 0), MODULE.Handler)
+        server_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            with patch.object(
+                MODULE,
+                "resume_run",
+                return_value={"run_id": "run-http", "status": "running", "resumed": True},
+            ) as resumer:
+                connection = HTTPConnection("127.0.0.1", http_server.server_port)
+                connection.request(
+                    "POST",
+                    "/api/runs/run-http/resume",
+                    body="{}",
+                    headers={"Content-Type": "application/json"},
+                )
+                response = connection.getresponse()
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+            server_thread.join(timeout=2)
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(payload["run_id"], "run-http")
+        resumer.assert_called_once_with("run-http")
 
     def test_favicon_asset_is_served(self) -> None:
         from http.client import HTTPConnection

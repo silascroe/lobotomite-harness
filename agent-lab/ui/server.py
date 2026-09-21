@@ -979,6 +979,43 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resume_run(run_id: str) -> dict[str, Any]:
+    run_id = validate_run_id(run_id)
+    state = run_state(run_id)
+    if state["status"] != "interrupted":
+        raise ApiError("only interrupted runs can be resumed", 409)
+    with PROCESS_LOCK:
+        existing = PROCESSES.get(run_id)
+        if existing is not None and existing.poll() is None:
+            raise ApiError("run is already active", 409)
+    command = [sys.executable, str(HARNESS), "--resume-run", run_id]
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=creation_flags,
+        )
+    except OSError as exc:
+        raise ApiError(f"could not resume harness: {exc}", 500) from exc
+    with PROCESS_LOCK:
+        PROCESSES[run_id] = process
+        OUTPUTS[run_id] = []
+    threading.Thread(target=capture_process, args=(run_id, process), daemon=True).start()
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "project": state.get("project", ""),
+        "resumed": True,
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AgentLab/0.1"
 
@@ -1088,6 +1125,12 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError("request body must be a JSON object")
             if parsed.path == "/api/runs":
                 return self.send_json(start_run(payload), 202)
+            if parsed.path.startswith("/api/runs/"):
+                remainder = parsed.path[len("/api/runs/") :]
+                pieces = remainder.split("/", 2)
+                if len(pieces) == 2 and pieces[1] == "resume":
+                    run_id = validate_run_id(urllib.parse.unquote(pieces[0]))
+                    return self.send_json(resume_run(run_id), 202)
             if parsed.path == "/api/projects":
                 return self.send_json(create_project(payload.get("name")), 201)
             if parsed.path == "/api/skills/discover":

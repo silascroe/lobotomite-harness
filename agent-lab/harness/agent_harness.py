@@ -33,7 +33,7 @@ from workflow import (
 )
 from control_loop import RecoveryController, RecoveryDecision
 from context_window import build_context
-from persistence import atomic_write_json, atomic_write_text
+from persistence import atomic_write_bytes, atomic_write_json, atomic_write_text
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 
 
@@ -593,6 +593,8 @@ class AgentHarness:
         self.model_calls = 0
         self.tool_calls = 0
         self.current_turn = 0
+        self.checkpoint = "not_started"
+        self.resume_count = 0
         self.validation_passed = False
         self.had_tool_error = False
         self.evaluation: dict[str, Any] | None = None
@@ -689,6 +691,7 @@ class AgentHarness:
                     destination.write_bytes(source.read_bytes())
 
         self.initial_files = self.snapshot_files()
+        self.save_initial_snapshot()
         self.workflow = save_workflow(self.run_dir / "workflow.json", new_workflow())
         write_json(
             self.run_dir / "workspace.json",
@@ -720,6 +723,105 @@ class AgentHarness:
                 "content": self.user_content("Begin the task. Inspect the project first, then take the smallest useful next action."),
             },
         ]
+        self.save_transcript()
+
+    @property
+    def initial_snapshot_dir(self) -> Path:
+        return self.run_dir / "initial-project"
+
+    def save_initial_snapshot(self) -> None:
+        snapshot_dir = self.initial_snapshot_dir
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        manifest: dict[str, dict[str, int]] = {}
+        for relative_path, data in sorted(self.initial_files.items()):
+            destination = snapshot_dir / Path(relative_path)
+            atomic_write_bytes(destination, data)
+            manifest[relative_path] = {"bytes": len(data)}
+        write_json(self.run_dir / "initial-snapshot.json", {"version": 1, "files": manifest})
+
+    def load_initial_snapshot(self) -> dict[str, bytes]:
+        manifest = load_json(self.run_dir / "initial-snapshot.json")
+        raw_files = manifest.get("files")
+        if not isinstance(raw_files, dict):
+            raise HarnessError("run initial snapshot is missing its file manifest")
+        snapshot_root = self.initial_snapshot_dir.resolve()
+        files: dict[str, bytes] = {}
+        total = 0
+        for raw_name, metadata in raw_files.items():
+            relative_path = str(raw_name).replace("\\", "/")
+            candidate = (snapshot_root / relative_path).resolve()
+            try:
+                candidate.relative_to(snapshot_root)
+            except ValueError as exc:
+                raise HarnessError("run initial snapshot contains an unsafe path") from exc
+            if not candidate.is_file():
+                raise HarnessError(f"run initial snapshot is missing: {relative_path}")
+            data = candidate.read_bytes()
+            expected_bytes = metadata.get("bytes") if isinstance(metadata, dict) else None
+            if isinstance(expected_bytes, int) and len(data) != expected_bytes:
+                raise HarnessError(f"run initial snapshot is truncated: {relative_path}")
+            total += len(data)
+            if total > int(self.config.get("max_total_project_bytes", 500000)):
+                raise HarnessError("run initial snapshot exceeds max_total_project_bytes")
+            files[relative_path] = data
+        return files
+
+    @classmethod
+    def resume_from_run(cls, run_dir: Path) -> "AgentHarness":
+        run_dir = Path(run_dir).resolve()
+        if not run_dir.is_dir():
+            raise HarnessError(f"run directory does not exist: {run_dir}")
+        config = load_json(run_dir / "config.json")
+        workspace = load_json(run_dir / "workspace.json")
+        project_raw = workspace.get("project")
+        if not isinstance(project_raw, str) or not project_raw.strip():
+            raise HarnessError("run workspace does not identify a project directory")
+        task_path = run_dir / "task.md"
+        if not task_path.is_file():
+            raise HarnessError("run task is missing")
+        task = task_path.read_text(encoding="utf-8")
+        project_dir = Path(project_raw).expanduser().resolve()
+        harness = cls(task, config, run_dir, project_dir, template_dir=None)
+
+        try:
+            transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HarnessError("run transcript is missing or invalid") from exc
+        if not isinstance(transcript, list) or not transcript:
+            raise HarnessError("run transcript is empty or invalid")
+        harness.messages = [
+            item
+            for item in transcript
+            if isinstance(item, dict)
+            and item.get("role") in {"system", "user", "assistant"}
+            and isinstance(item.get("content"), str)
+        ]
+        if not harness.messages:
+            raise HarnessError("run transcript has no usable messages")
+
+        progress = load_json(run_dir / "progress.json")
+        summary = load_json(run_dir / "summary.json") if (run_dir / "summary.json").is_file() else {}
+        persisted_status = summary.get("status") or progress.get("status")
+        if persisted_status in {"success", "complete", "blocked", "error"}:
+            raise HarnessError(f"cannot resume a terminal run with status {persisted_status}")
+        harness.initial_files = harness.load_initial_snapshot()
+        harness.workflow = load_workflow(run_dir / "workflow.json")
+        evidence = progress.get("workflow_evidence") or summary.get("workflow_evidence") or {}
+        for name in harness.workflow_evidence:
+            harness.workflow_evidence[name] = bool(evidence.get(name, False))
+        harness.current_turn = int(progress.get("turn", 0) or 0)
+        harness.model_calls = int(progress.get("model_calls", 0) or 0)
+        harness.tool_calls = int(progress.get("tool_calls", 0) or 0)
+        harness.checkpoint = str(progress.get("checkpoint") or "unknown")
+        harness.resume_count = int(progress.get("resume_count", 0) or 0) + 1
+        harness.validation_passed = bool(progress.get("validation_passed", False))
+        harness.had_tool_error = bool(progress.get("had_tool_error", False))
+        harness.evaluation = progress.get("evaluation") if isinstance(progress.get("evaluation"), dict) else None
+        harness.finish_summary = str(progress.get("summary") or "")
+        harness.blocked_reason = str(progress.get("blocked_reason") or "")
+        harness.recovery = RecoveryController.from_snapshot(progress.get("recovery") or summary.get("recovery"))
+        harness.status = "interrupted"
+        return harness
 
     def snapshot_files(self) -> dict[str, bytes]:
         files: dict[str, bytes] = {}
@@ -1353,9 +1455,11 @@ class AgentHarness:
     def save_transcript(self) -> None:
         write_json(self.run_dir / "transcript.json", self.messages)
 
-    def save_progress(self, *, turn: int | None = None) -> None:
+    def save_progress(self, *, turn: int | None = None, checkpoint: str | None = None) -> None:
         if turn is not None:
             self.current_turn = max(0, int(turn))
+        if checkpoint is not None:
+            self.checkpoint = str(checkpoint)
         status = self.status if self.status != "not_started" else "running"
         write_json(
             self.run_dir / "progress.json",
@@ -1364,6 +1468,13 @@ class AgentHarness:
                 "turn": self.current_turn,
                 "model_calls": self.model_calls,
                 "tool_calls": self.tool_calls,
+                "checkpoint": self.checkpoint,
+                "resume_count": self.resume_count,
+                "validation_passed": self.validation_passed,
+                "had_tool_error": self.had_tool_error,
+                "evaluation": self.evaluation,
+                "recovery": self.recovery.snapshot(),
+                "blocked_reason": self.blocked_reason,
                 "workflow": self.workflow,
                 "workflow_evidence": dict(self.workflow_evidence),
                 "context": dict(self.context_metadata),
@@ -1395,6 +1506,7 @@ class AgentHarness:
         step: int | None = None,
     ) -> None:
         self.status = "blocked"
+        self.checkpoint = "terminal"
         self.blocked_reason = (
             f"recovery exhausted for {decision.category} after {decision.attempt} attempts: {decision.detail}"
         )
@@ -1412,6 +1524,8 @@ class AgentHarness:
             "endpoint": self.config.get("endpoint"),
             "model_calls": self.model_calls,
             "tool_calls": self.tool_calls,
+            "checkpoint": self.checkpoint,
+            "resume_count": self.resume_count,
             "validation_passed": self.validation_passed,
             "evaluation": self.evaluation,
             "changed_files": changed,
@@ -1429,27 +1543,60 @@ class AgentHarness:
         write_json(self.run_dir / "summary.json", summary)
         self.save_progress()
 
-    def run(self) -> int:
-        self.prepare()
-        self.status = "running"
-        self.save_transcript()
-        self.save_progress(turn=0)
+    def run(self, *, resume: bool = False) -> int:
         max_turns = int(self.config.get("max_turns", 18))
-        correction = ""
+        pending_response: str | None = None
+        pending_turn: int | None = None
+        if resume:
+            self.status = "running"
+            self.finish_summary = ""
+            last_message = self.messages[-1] if self.messages else {}
+            if self.checkpoint == "model_response" and last_message.get("role") == "assistant":
+                pending_response = last_message.get("content")
+                pending_turn = self.current_turn
+            elif self.checkpoint == "model_call" and last_message.get("role") == "assistant":
+                pending_response = last_message.get("content")
+                pending_turn = self.current_turn + 1
+            start_turn = pending_turn if pending_turn is not None else self.current_turn + 1
+            end_turn = start_turn + max_turns
+            self.logger.event(
+                "run_resumed",
+                turn=self.current_turn,
+                checkpoint=self.checkpoint,
+                resume_count=self.resume_count,
+            )
+            correction = "" if pending_response is not None else "The previous worker stopped. Continue from the last saved transcript and tool result."
+            if pending_response is None:
+                self.save_progress(checkpoint="resume")
+        else:
+            self.prepare()
+            self.status = "running"
+            self.save_transcript()
+            self.save_progress(turn=0, checkpoint="prepared")
+            start_turn = 1
+            end_turn = max_turns + 1
+            correction = ""
         try:
-            for turn in range(1, max_turns + 1):
-                self.current_turn = turn
+            for turn in range(start_turn, end_turn):
                 if correction:
                     self.messages.append({"role": "user", "content": self.user_content(correction)})
                     self.save_transcript()
-                    self.save_progress(turn=turn)
-                print(f"turn {turn}/{max_turns}: asking model")
-                response = self.call_model()
-                content = response["content"]
-                self.logger.event("model_response", turn=turn, **response)
-                self.messages.append({"role": "assistant", "content": content})
-                self.save_transcript()
-                self.save_progress(turn=turn)
+                display_limit = max_turns if not resume else end_turn - 1
+                if pending_response is not None and turn == pending_turn:
+                    print(f"turn {turn}/{display_limit}: resuming saved model response")
+                    content = pending_response
+                    pending_response = None
+                    self.current_turn = turn
+                else:
+                    self.save_progress(checkpoint="model_call")
+                    print(f"turn {turn}/{display_limit}: asking model")
+                    response = self.call_model()
+                    self.current_turn = turn
+                    content = response["content"]
+                    self.logger.event("model_response", turn=turn, **response)
+                    self.messages.append({"role": "assistant", "content": content})
+                    self.save_transcript()
+                    self.save_progress(turn=turn, checkpoint="model_response")
                 try:
                     parsed = extract_json_object(content)
                     action = parsed.get("action")
@@ -1505,6 +1652,7 @@ class AgentHarness:
                     if self.status not in {"success", "blocked"}:
                         self.status = "success"
                     self.finish_summary = str(args.get("summary", ""))
+                    self.checkpoint = "terminal"
                     self.workflow = observe_tool(self.workflow, "finish", {"ok": True, "status": self.status})
                     save_workflow(self.run_dir / "workflow.json", self.workflow)
                     self.logger.event("workflow_phase", source="automatic", action="finish", state=self.workflow)
@@ -1548,6 +1696,8 @@ class AgentHarness:
                             ),
                         }
                     )
+                    self.save_transcript()
+                    self.save_progress(turn=turn, checkpoint="tool_result")
                     continue
 
                 self.tool_calls += 1
@@ -1580,17 +1730,19 @@ class AgentHarness:
                 }
                 self.messages.append({"role": "user", "content": self.user_content(json_text(observation))})
                 self.save_transcript()
-                self.save_progress(turn=turn)
+                self.save_progress(turn=turn, checkpoint="tool_result")
 
             self.status = "blocked"
+            self.checkpoint = "terminal"
             self.finish_summary = f"reached the {max_turns}-turn limit without a finish action"
-            self.logger.event("turn_limit", max_turns=max_turns)
+            self.logger.event("turn_limit", max_turns=max_turns, resumed=resume)
             print(f"  stopped: {self.finish_summary}")
             self.save_transcript()
             self.save_summary()
             return 2
         except Exception as exc:
             self.status = "error"
+            self.checkpoint = "terminal"
             self.finish_summary = str(exc)
             self.logger.event("harness_error", error=str(exc))
             self.save_transcript()
@@ -1600,9 +1752,10 @@ class AgentHarness:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a local model as a constrained coding agent")
-    task_source = parser.add_mutually_exclusive_group(required=True)
+    task_source = parser.add_mutually_exclusive_group(required=False)
     task_source.add_argument("--task-file", type=Path)
     task_source.add_argument("--task-text")
+    parser.add_argument("--resume-run", type=ensure_run_id, help="resume an interrupted run by its persisted run id")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--run-id", type=ensure_run_id)
     parser.add_argument("--template", type=Path)
@@ -1615,6 +1768,24 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.resume_run:
+        if any(value is not None for value in (args.task_file, args.task_text, args.template, args.project_dir, args.run_id)):
+            raise SystemExit("--resume-run cannot be combined with a new task, template, project, or run id")
+        run_dir = ROOT / "agent-lab" / "runs" / args.resume_run
+        try:
+            harness = AgentHarness.resume_from_run(run_dir)
+        except HarnessError as exc:
+            print(f"harness error: {exc}", file=sys.stderr)
+            return 1
+        print(f"resuming run: {args.resume_run}")
+        print(f"project: {harness.project_dir}")
+        try:
+            return harness.run(resume=True)
+        except HarnessError as exc:
+            print(f"harness error: {exc}", file=sys.stderr)
+            return 1
+    if args.task_file is None and args.task_text is None:
+        raise SystemExit("one of --task-file, --task-text, or --resume-run is required")
     config_file = args.config if args.config.is_absolute() else ROOT / args.config
     template = None if args.template is None else (args.template if args.template.is_absolute() else ROOT / args.template)
     if args.task_text is not None:

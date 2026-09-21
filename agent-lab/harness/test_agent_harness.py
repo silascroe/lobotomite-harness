@@ -152,6 +152,73 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertNotIn("reasoning_content", result)
         self.assertTrue(result["reasoning_present"])
 
+    def test_interrupted_run_can_restore_snapshot_transcript_and_progress(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "resume-run"
+        project_dir = root / "resume-project"
+        project_dir.mkdir()
+        (project_dir / "baseline.txt").write_bytes(b"original\n")
+        harness = MODULE.AgentHarness(
+            task="resume this task",
+            config={
+                "endpoint": "http://model.invalid/v1/chat/completions",
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.messages.append({"role": "assistant", "content": "saved response"})
+        harness.save_transcript()
+        harness.workflow_evidence["inspect"] = True
+        harness.save_progress(turn=3, checkpoint="tool_result")
+
+        restored = MODULE.AgentHarness.resume_from_run(run_dir)
+
+        self.assertEqual(restored.task, "resume this task")
+        self.assertEqual(restored.initial_files["baseline.txt"], b"original\n")
+        self.assertEqual(restored.messages[-1]["content"], "saved response")
+        self.assertEqual(restored.current_turn, 3)
+        self.assertEqual(restored.checkpoint, "tool_result")
+        self.assertTrue(restored.workflow_evidence["inspect"])
+        self.assertTrue((run_dir / "initial-project" / "baseline.txt").is_file())
+
+    def test_resume_processes_a_saved_model_response_without_calling_model_again(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "pending-response-run"
+        project_dir = root / "pending-response-project"
+        project_dir.mkdir()
+        harness = MODULE.AgentHarness(
+            task="resume the saved response",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.status = "running"
+        harness.current_turn = 1
+        harness.messages.append(
+            {"role": "assistant", "content": '{"action":"finish","args":{"status":"success","summary":"recovered"}}'}
+        )
+        harness.save_transcript()
+        harness.save_progress(turn=1, checkpoint="model_response")
+
+        restored = MODULE.AgentHarness.resume_from_run(run_dir)
+        restored.call_model = lambda: (_ for _ in ()).throw(AssertionError("model should not be called"))
+
+        result = restored.run(resume=True)
+
+        self.assertEqual(result, 0)
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["status"], "success")
+        self.assertEqual(summary["summary"], "recovered")
+
     def test_selected_skills_are_injected_without_unused_skill_text(self) -> None:
         harness = MODULE.AgentHarness(
             task="build task",

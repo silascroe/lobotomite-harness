@@ -644,6 +644,11 @@ function renderRun(run) {
   $("turnCount").textContent = summary.model_calls ? `${summary.model_calls} model calls · ${summary.tool_calls || 0} tool calls` : "running";
   $("rawOutput").textContent = (run.output || []).join("\n") || "No process output yet.";
   setStatus(run.status);
+  const resumeButton = $("resumeRunButton");
+  if (resumeButton) {
+    resumeButton.hidden = run.status !== "interrupted";
+    resumeButton.disabled = run.status === "running";
+  }
   renderReasoningControl(run);
   renderWorkflow(run.workflow);
   renderInspector(run);
@@ -1063,6 +1068,28 @@ async function startRun() {
   }
 }
 
+async function resumeRun() {
+  if (!state.activeRun) return;
+  const button = $("resumeRunButton");
+  if (button) button.disabled = true;
+  $("launchNote").textContent = `Resuming ${state.activeRun}...`;
+  setWorkspaceNotice(`Resuming ${state.activeRun}.`, "working");
+  try {
+    const result = await api(`/api/runs/${encodeURIComponent(state.activeRun)}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    await selectRun(result.run_id);
+    setWorkspaceNotice(`Run resumed in ${shortenPath(result.project || "the existing project")}.`, "success");
+    startRunPolling();
+  } catch (error) {
+    if (button) button.disabled = false;
+    $("launchNote").textContent = error.message;
+    setWorkspaceNotice(`Could not resume the run: ${error.message}`, "error");
+  }
+}
+
 async function loadTasks() {
   const data = await api("/api/tasks");
   state.tasks = data.tasks || [];
@@ -1181,6 +1208,7 @@ $("chatInput").addEventListener("keydown", (event) => {
 $("sidebarToggle").addEventListener("click", toggleMobileSidebar);
 $("mobileWorkspaceButton").addEventListener("click", () => openModal("workspaceDialog", "mobileWorkspaceButton"));
 $("inspectorToggle").addEventListener("click", toggleInspector);
+$("resumeRunButton").addEventListener("click", resumeRun);
 $("runDetailsButton").addEventListener("click", () => setInspectorOpen(true));
 $("closeInspector").addEventListener("click", () => setInspectorOpen(false));
 $("detailsBackdrop").addEventListener("click", () => setInspectorOpen(false));

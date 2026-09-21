@@ -31,7 +31,7 @@ test("critical legacy capabilities remain mounted", () => {
     "taskPreset", "taskText", "useGates", "reasoningLevel", "workflowSteps", "chatMessages",
     "chatInput", "retryJobButton", "activity", "fileList", "filePreview", "rawOutput",
     "workspaceDialog", "runDialog", "detailsBackdrop", "rightRail", "skillSummary",
-    "skillOverride", "findSkillsButton", "skillSearch", "skillResults",
+    "skillOverride", "findSkillsButton", "skillSearch", "skillResults", "resumeRunButton",
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `missing #${id}`);
   }
@@ -47,6 +47,7 @@ test("workflow and retry contracts remain intact", () => {
   assert.match(app, /function renderWorkflow/);
   assert.match(app, /function renderJobRecovery/);
   assert.match(app, /\/retry/);
+  assert.match(app, /\/resume/);
   assert.match(app, /interrupted/);
   assert.match(css, /\.workflow-step\.active/);
   assert.match(css, /\.workflow-step\.blocked/);
@@ -87,6 +88,7 @@ test("browser code owns mode, modal, and details presentation state", () => {
   assert.match(app, /function restoreModalFocus\(/);
   assert.match(app, /function setDetailsTab\(/);
   assert.match(app, /function renderRunSurface\(/);
+  assert.match(app, /function resumeRun\(/);
   assert.match(app, /setMode\(["']runs["']/);
   assert.match(app, /setMode\(["']chats["']/);
 });

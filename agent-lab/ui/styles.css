@@ -491,6 +491,13 @@ summary {
 }
 
 .record-heading-copy { min-width: 0; }
+.record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .record-context {
   margin: 0 0 7px;
   color: var(--iris-strong);
