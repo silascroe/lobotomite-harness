@@ -918,6 +918,7 @@ class AgentHarness:
         for header, body in hunks:
             old_block = [line[1:] for line in body if line[0] in (" ", "-")]
             new_block = [line[1:] for line in body if line[0] in (" ", "+")]
+            addition_block = [line[1:] for line in body if line.startswith("+")]
             if old_block:
                 position = -1
                 for candidate in range(cursor, len(result) - len(old_block) + 1):
@@ -930,7 +931,15 @@ class AgentHarness:
                             position = candidate
                             break
                 if position < 0:
-                    raise HarnessError("could not find update-patch context in the target file")
+                    if addition_block and not any(line.startswith("-") for line in body):
+                        match = re.search(r"-([0-9]+)", header)
+                        if not match:
+                            raise HarnessError("could not find update-patch context in the target file")
+                        position = min(max(0, int(match.group(1)) - 1), len(result))
+                        old_block = []
+                        new_block = addition_block
+                    else:
+                        raise HarnessError("could not find update-patch context in the target file")
             else:
                 match = re.search(r"-([0-9]+)", header)
                 position = max(0, int(match.group(1)) - 1) if match else len(result)

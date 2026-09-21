@@ -312,6 +312,44 @@ const b = 2;
             "const a = 3;\nconst b = 2;\n",
         )
 
+    def test_addition_only_hunk_can_ignore_stale_unprefixed_context(self) -> None:
+        self.harness.write_file({"path": "styles.css", "content": "one\nanchor\ntwo\n"})
+
+        result = self.harness.apply_patch(
+            {
+                "patch": """*** Begin Patch
+*** Update File: styles.css
+@@ -2,4 +2,6 @@
++inserted one
+stale context from an older read
++inserted two
+"""
+            }
+        )
+
+        self.assertEqual(result["changed"], ["styles.css"])
+        self.assertEqual(
+            (self.project_dir / "styles.css").read_text(encoding="utf-8"),
+            "one\ninserted one\ninserted two\nanchor\ntwo\n",
+        )
+
+    def test_replacement_hunk_still_rejects_stale_context(self) -> None:
+        self.harness.write_file({"path": "styles.css", "content": "one\nanchor\ntwo\n"})
+
+        with self.assertRaises(MODULE.HarnessError):
+            self.harness.apply_patch(
+                {
+                    "patch": """*** Begin Patch
+*** Update File: styles.css
+@@
+-stale old line
++new line
+*** End Patch"""
+                }
+            )
+
+        self.assertEqual((self.project_dir / "styles.css").read_text(encoding="utf-8"), "one\nanchor\ntwo\n")
+
     def test_update_patch_accepts_end_of_input_as_an_implicit_end_marker(self) -> None:
         self.harness.write_file({"path": "script.js", "content": "const a = 1;\n"})
 
