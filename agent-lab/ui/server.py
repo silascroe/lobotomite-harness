@@ -40,6 +40,7 @@ from agent_harness import (  # noqa: E402
     normalize_reasoning_level,
     recovery_instruction,
     reasoning_options,
+    WorkspaceBusyError,
 )
 from approval import normalize_mode, public_request  # noqa: E402
 from skills import (  # noqa: E402
@@ -347,6 +348,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "workflow": workflow,
         "review": review,
         "approval": approval,
+        "workspace_lock": summary.get("workspace_lock") or progress.get("workspace_lock") or {"status": "unknown"},
         "skills": summary.get("skills", {}),
         "model": summary.get("model", ""),
         "model_calls": summary.get("model_calls", progress.get("model_calls", 0)),
@@ -377,6 +379,7 @@ def run_summaries() -> list[dict[str, Any]]:
                 "workflow": state.get("workflow", {}),
                 "review": state.get("review", {}),
                 "approval": state.get("approval", {}),
+                "workspace_lock": state.get("workspace_lock", {}),
                 "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
                 "updated": directory.stat().st_mtime,
@@ -539,6 +542,7 @@ class InteractiveSession:
             project_dir=self.project_dir,
             template_dir=None,
             system_prompt=INTERACTIVE_SYSTEM_PROMPT,
+            workspace_kind="session",
         )
         if resume:
             self._restore_from_disk(persisted or {})
@@ -630,6 +634,7 @@ class InteractiveSession:
         else:
             self.status = "ready"
             self.last_error = ""
+        self.harness.acquire_workspace_lease()
         self.busy = False
         self.harness.logger.event(
             "session_rehydrated",
@@ -663,6 +668,7 @@ class InteractiveSession:
                 "workflow": self.harness.workflow,
                 "review": review_from(self.run_dir, self.project_dir),
                 "approval": self.harness.approval_view(),
+                "workspace_lock": self.harness.workspace_lock_view(),
                 "recovery": self.harness.recovery.snapshot(),
                 "skills": self.harness.skill_metadata(),
                 "skill_overrides": self.harness.config.get("skill_overrides", {}),
@@ -696,6 +702,7 @@ class InteractiveSession:
             "workflow": self.harness.workflow,
             "review": review_from(self.run_dir, self.project_dir),
             "approval": self.harness.approval_view(),
+            "workspace_lock": self.harness.workspace_lock_view(),
             "recovery": self.harness.recovery.snapshot(),
             "skills": self.harness.skill_metadata(),
             "conversation": conversation,
@@ -1092,6 +1099,8 @@ def create_session(
             skill_overrides=skill_overrides,
             approval_mode=normalize_mode(approval_mode),
         )
+    except WorkspaceBusyError as exc:
+        raise ApiError(str(exc), 409) from exc
     except HarnessError as exc:
         raise ApiError(str(exc), 413) from exc
     with SESSION_LOCK:

@@ -44,10 +44,12 @@ from approval import (
 )
 from review import build_review_packet, fingerprint, review_status
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
+from workspace_lock import WorkspaceBusyError, WorkspaceLease, acquire as acquire_workspace_lease, read_lock
 
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = ROOT / "agent-lab" / "harness" / "config.json"
+WORKSPACE_LOCK_ROOT = ROOT / "agent-lab" / ".workspace-locks"
 ACTION_NAMES = {
     "list_files",
     "read_file",
@@ -583,12 +585,15 @@ class AgentHarness:
         project_dir: Path,
         template_dir: Path | None,
         system_prompt: str | None = None,
+        workspace_kind: str = "run",
     ) -> None:
         self.task = task
         self.config = config
         self.run_dir = run_dir
         self.project_dir = project_dir
         self.template_dir = template_dir
+        self.workspace_kind = str(workspace_kind or "run")
+        self.workspace_lease: WorkspaceLease | None = None
         self.system_prompt = system_prompt or SYSTEM_PROMPT
         self.logger = RunLogger(run_dir / "events.jsonl")
         self.messages: list[dict[str, str]] = []
@@ -642,6 +647,32 @@ class AgentHarness:
         return int(self.config.get("tool_output_chars", 10000))
 
     @property
+    def workspace_owner_id(self) -> str:
+        return f"{self.workspace_kind}:{self.run_dir.name}"
+
+    def acquire_workspace_lease(self) -> None:
+        if self.workspace_lease is not None:
+            return
+        self.workspace_lease = acquire_workspace_lease(
+            WORKSPACE_LOCK_ROOT,
+            self.project_dir,
+            self.workspace_owner_id,
+            self.workspace_kind,
+        )
+        if self.run_dir.exists():
+            self.logger.event("workspace_lock_acquired", workspace=self.workspace_lease.public())
+
+    def release_workspace_lease(self) -> None:
+        if self.workspace_lease is None:
+            return
+        self.workspace_lease.release()
+        self.logger.event("workspace_lock_released", workspace=self.workspace_lease.public())
+        self.workspace_lease = None
+
+    def workspace_lock_view(self) -> dict[str, Any]:
+        return self.workspace_lease.public() if self.workspace_lease is not None else {"status": "none"}
+
+    @property
     def max_file_bytes(self) -> int:
         return int(self.config.get("max_file_bytes", 60000))
 
@@ -690,10 +721,15 @@ class AgentHarness:
     def prepare(self) -> None:
         if self.run_dir.exists():
             raise HarnessError(f"run directory already exists: {self.run_dir}. Choose a new run id")
-        self.run_dir.mkdir(parents=True)
         project_was_present = self.project_dir.exists()
         if project_was_present and not self.project_dir.is_dir():
             raise HarnessError(f"project path is not a directory: {self.project_dir}")
+        try:
+            self.acquire_workspace_lease()
+        except WorkspaceBusyError:
+            raise
+        self.run_dir.mkdir(parents=True)
+        self.logger.event("workspace_lock_acquired", workspace=self.workspace_lease.public())
         self.project_dir.mkdir(parents=True, exist_ok=True)
         if self.template_dir is not None:
             if not self.template_dir.is_dir():
@@ -853,6 +889,10 @@ class AgentHarness:
         harness.status = "interrupted"
         if persisted_status == "waiting_approval" and harness.pending_approval:
             harness.status = "waiting_approval"
+        try:
+            harness.acquire_workspace_lease()
+        except WorkspaceBusyError:
+            raise
         return harness
 
     def snapshot_files(self) -> dict[str, bytes]:
@@ -1634,6 +1674,7 @@ class AgentHarness:
                     "reviewed_fingerprint": self.review_packet.get("current_fingerprint") if self.review_packet else None,
                 },
                 "approval": self.approval_view(),
+                "workspace_lock": self.workspace_lock_view(),
                 "recovery": self.recovery.snapshot(),
                 "blocked_reason": self.blocked_reason,
                 "workflow": self.workflow,
@@ -1708,12 +1749,15 @@ class AgentHarness:
                 "diff_truncated": bool(self.review_packet.get("diff_truncated", False)) if self.review_packet else False,
             },
             "approval": self.approval_view(),
+            "workspace_lock": self.workspace_lock_view(),
             "skills": self.skill_metadata(),
             "recovery": self.recovery.snapshot(),
             "blocked_reason": self.blocked_reason,
         }
         write_json(self.run_dir / "summary.json", summary)
         self.save_progress()
+        if self.status in {"success", "complete", "blocked", "error"}:
+            self.release_workspace_lease()
 
     def run(self, *, resume: bool = False, approval_decision: str | None = None) -> int:
         max_turns = int(self.config.get("max_turns", 18))
@@ -2004,14 +2048,14 @@ def main() -> int:
         run_dir = ROOT / "agent-lab" / "runs" / args.resume_run
         try:
             harness = AgentHarness.resume_from_run(run_dir)
-        except HarnessError as exc:
+        except (HarnessError, WorkspaceBusyError) as exc:
             print(f"harness error: {exc}", file=sys.stderr)
             return 1
         print(f"resuming run: {args.resume_run}")
         print(f"project: {harness.project_dir}")
         try:
             return harness.run(resume=True, approval_decision=args.approval_decision)
-        except HarnessError as exc:
+        except (HarnessError, WorkspaceBusyError) as exc:
             print(f"harness error: {exc}", file=sys.stderr)
             return 1
     if args.task_file is None and args.task_text is None:
@@ -2058,7 +2102,7 @@ def main() -> int:
     print(f"project: {project_dir}")
     try:
         return harness.run()
-    except HarnessError as exc:
+    except (HarnessError, WorkspaceBusyError) as exc:
         print(f"harness error: {exc}", file=sys.stderr)
         return 1
 

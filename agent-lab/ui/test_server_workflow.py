@@ -61,6 +61,19 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertTrue((session.run_dir / "workflow.json").is_file())
         self.assertIn("context", state)
 
+    def test_interactive_session_rejects_a_second_owner_of_the_same_project(self) -> None:
+        project = Path(self.temp_dir.name) / "shared-project"
+        project.mkdir()
+        first = MODULE.InteractiveSession("chat-owner-a", project_path=str(project))
+
+        with self.assertRaises(MODULE.WorkspaceBusyError):
+            MODULE.InteractiveSession("chat-owner-b", project_path=str(project))
+        with self.assertRaises(MODULE.ApiError) as raised:
+            MODULE.create_session(project_path=str(project))
+
+        self.assertEqual(raised.exception.status, 409)
+        first.harness.release_workspace_lease()
+
     def test_interactive_confirm_mode_pauses_with_a_public_approval_record(self) -> None:
         project = Path(self.temp_dir.name) / "approval-project"
         project.mkdir()

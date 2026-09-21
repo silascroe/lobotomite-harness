@@ -673,6 +673,7 @@ function renderInspector(record = state.activeRecord) {
   const workflow = normalizeWorkflow(record?.workflow);
   const skills = record?.skills || {};
   const skillNames = Array.isArray(skills.resolved) ? skills.resolved.map((item) => item.name).filter(Boolean) : [];
+  const workspaceLock = record?.workspace_lock || {};
   renderReasoningControl(record);
   renderApprovalControl(record);
   $("inspectorContent").innerHTML = [
@@ -681,6 +682,7 @@ function renderInspector(record = state.activeRecord) {
     detailRow("Model", escapeText(model)),
     detailRow("Reasoning", escapeText(reasoningLabel)),
     detailRow("Tool approvals", escapeText(normalizeApprovalMode(record?.approval_mode || state.approvalMode) === "confirm" ? "Ask before edits" : "Autonomous")),
+    detailRow("Workspace lease", escapeText(workspaceLock.status === "held" ? "Held by this worker" : workspaceLock.status === "none" ? "Not held" : "Unavailable"), "muted-value"),
     detailRow("Thinking budget", escapeText(reasoningBudget), "muted-value"),
     detailRow("Response cap", `${formatTokenCount(reasoningMax)} tokens`, "muted-value"),
     detailRow("Context window", escapeText(contextLabel), "muted-value"),

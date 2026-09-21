@@ -8,6 +8,7 @@ agent-lab/.secrets/
 agent-lab/runs/
 agent-lab/chat-sessions/
 agent-lab/projects/
+agent-lab/.workspace-locks/
 agent-lab/*-bridge-state.json
 agent-lab/*-bridge-logs/
 agent-lab/cloudflared/

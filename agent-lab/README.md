@@ -28,6 +28,8 @@ The console now has a project layer for ongoing local-agent work. Create or sele
 
 Scratch work is disposable and lives under the individual chat or run directory. Existing-folder mode is for attaching a project that already lives somewhere else on disk.
 
+Agent Lab takes one durable workspace lease per project path. A second live chat or run targeting the same persistent or existing folder is rejected with a readable conflict instead of editing concurrently. The lease records the owner and process, is released when a run reaches a terminal state, and reclaims only locks whose process is no longer alive after a restart. This coordinates Agent Lab workers; it is not a substitute for Git or a security sandbox.
+
 ### Telegram bridge
 
 The Telegram bridge can run as a per-user Windows Scheduled Task, so it does not depend on a PowerShell window staying open. Install it once from the workspace root:

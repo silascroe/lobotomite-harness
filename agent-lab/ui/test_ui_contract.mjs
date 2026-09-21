@@ -75,6 +75,7 @@ test("tool approval controls expose durable confirm and resume actions", () => {
   assert.match(app, /function resolveRunApproval\(/);
   assert.match(app, /sessions.*\/approval|\/approval/);
   assert.match(app, /approval_mode/);
+  assert.match(app, /Workspace lease/);
   assert.match(css, /\.approval-control/);
   assert.match(css, /\.approval-job/);
 });

@@ -620,6 +620,50 @@ stale context from an older read
         result = harness.write_file({"path": "src/main.py", "content": "print('ok')\n"})
         self.assertTrue(result["created"])
 
+    def test_live_workspace_lease_rejects_a_second_run_until_released(self) -> None:
+        root = Path(self.temp_dir.name)
+        project = root / "shared-project"
+        project.mkdir()
+        first = MODULE.AgentHarness(
+            task="first run",
+            config={"max_file_bytes": 60000, "max_total_project_bytes": 500000},
+            run_dir=root / "first-run",
+            project_dir=project,
+            template_dir=None,
+        )
+        first.prepare()
+        second = MODULE.AgentHarness(
+            task="second run",
+            config={"max_file_bytes": 60000, "max_total_project_bytes": 500000},
+            run_dir=root / "second-run",
+            project_dir=project,
+            template_dir=None,
+        )
+
+        with self.assertRaises(MODULE.WorkspaceBusyError):
+            second.prepare()
+
+        first.release_workspace_lease()
+        second.prepare()
+        second.release_workspace_lease()
+
+    def test_terminal_summary_releases_workspace_lease(self) -> None:
+        root = Path(self.temp_dir.name)
+        project = root / "terminal-project"
+        project.mkdir()
+        harness = MODULE.AgentHarness(
+            task="terminal run",
+            config={"max_file_bytes": 60000, "max_total_project_bytes": 500000},
+            run_dir=root / "terminal-run",
+            project_dir=project,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.status = "success"
+        harness.save_summary()
+
+        self.assertIsNone(MODULE.read_lock(MODULE.WORKSPACE_LOCK_ROOT, project))
+
     def test_reasoning_levels_map_to_budget_and_model_profile(self) -> None:
         settings = MODULE.reasoning_settings(
             {
