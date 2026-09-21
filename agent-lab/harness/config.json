@@ -9,6 +9,8 @@
   "reasoning_level": "standard",
   "reasoning_profile": "gemma",
   "reasoning_answer_tokens": 1024,
+  "context_max_tokens": 6000,
+  "context_recent_messages": 12,
   "personality": "slight_demon",
   "require_workflow_gates": true,
   "allow_remote_skill_search": false,

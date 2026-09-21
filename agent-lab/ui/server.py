@@ -491,6 +491,9 @@ class InteractiveSession:
         if not messages or messages[0]["role"] != "system":
             messages.insert(0, {"role": "system", "content": self.harness.system_content()})
         self.harness.messages = messages
+        persisted_context = persisted.get("context")
+        if isinstance(persisted_context, dict):
+            self.harness.context_metadata = dict(persisted_context)
         self.harness.workflow = load_workflow(self.run_dir / "workflow.json")
         self.harness.recovery = RecoveryController.from_snapshot(persisted.get("recovery"))
         self.harness.initial_files = self.harness.snapshot_files()
@@ -556,6 +559,7 @@ class InteractiveSession:
                 "last_error": self.last_error,
                 "model": self.harness.config.get("model"),
                 "reasoning": self.harness.reasoning_metadata(),
+                "context": dict(self.harness.context_metadata),
                 "model_calls": self.harness.model_calls,
                 "tool_calls": self.harness.tool_calls,
                 "project": str(self.project_dir),
@@ -584,6 +588,7 @@ class InteractiveSession:
             "job": self.job,
             "model": self.harness.config.get("model"),
             "reasoning": self.harness.reasoning_metadata(),
+            "context": dict(self.harness.context_metadata),
             "model_calls": self.harness.model_calls,
             "tool_calls": self.harness.tool_calls,
             "project": str(self.project_dir),

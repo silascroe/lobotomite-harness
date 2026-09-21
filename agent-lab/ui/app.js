@@ -376,11 +376,18 @@ function eventCopy(event) {
       const decision = data.decision || {};
       return `Recovery exhausted: ${decision.detail || "the same failure persisted"}`;
     }
+    case "context_compacted": {
+      const before = data.before_tokens || "?";
+      const after = data.after_tokens || "?";
+      const dropped = data.dropped_messages || 0;
+      return `Context compacted ${before} → ${after} tokens; ${dropped} older messages summarized`;
+    }
     case "model_response": return `Model replied${data.finish_reason ? ` (${data.finish_reason})` : ""}`;
     case "tool_result": {
       const action = data.action || "tool";
       const result = data.result || {};
       if (action === "write_file") return `Created ${result.path || "a file"}`;
+      if (action === "replace_text") return `Replaced text in ${result.path || data.args?.path || "a file"}`;
       if (action === "apply_patch") return `Applied changes to ${(result.changed || []).join(", ") || "files"}`;
       if (action === "run_command") return `Ran ${data.args?.command || "a command"} → exit ${result.exit_code ?? "error"}`;
       if (action === "list_files") return `Inspected the folder (${result.entries?.length || 0} entries)`;
@@ -414,7 +421,7 @@ function eventClass(event) {
     return phase === "blocked" ? "error" : phase === "complete" ? "success" : "tool";
   }
   if (["harness_error", "finish_rejected", "turn_limit", "interactive_step_limit", "job_interrupted", "recovery_exhausted"].includes(event.event)) return "error";
-  if (["recovery_retry", "recovery_duplicate_action", "workflow_late_evidence"].includes(event.event)) return "tool";
+  if (["recovery_retry", "recovery_duplicate_action", "workflow_late_evidence", "context_compacted"].includes(event.event)) return "tool";
   if (event.event === "tool_result") return "tool";
   return "";
 }
@@ -583,6 +590,10 @@ function renderInspector(record = state.activeRecord) {
   const effectiveBudget = reasoning.budget ?? reasoningOption(reasoning.level || state.reasoningLevel).budget;
   const reasoningBudget = effectiveBudget > 0 ? `${formatTokenCount(effectiveBudget)} tokens` : "Disabled";
   const reasoningMax = reasoning.max_tokens || reasoningOption(reasoning.level || state.reasoningLevel).max_tokens;
+  const context = record?.context || {};
+  const contextLabel = context.compacted
+    ? `${formatTokenCount(context.after_tokens || 0)} / ${formatTokenCount(context.max_tokens || 0)} tokens · ${context.dropped_messages || 0} older messages summarized`
+    : "No compaction yet";
   const workflow = normalizeWorkflow(record?.workflow);
   const skills = record?.skills || {};
   const skillNames = Array.isArray(skills.resolved) ? skills.resolved.map((item) => item.name).filter(Boolean) : [];
@@ -594,6 +605,7 @@ function renderInspector(record = state.activeRecord) {
     detailRow("Reasoning", escapeText(reasoningLabel)),
     detailRow("Thinking budget", escapeText(reasoningBudget), "muted-value"),
     detailRow("Response cap", `${formatTokenCount(reasoningMax)} tokens`, "muted-value"),
+    detailRow("Context window", escapeText(contextLabel), "muted-value"),
     detailRow("Skills", escapeText(skillNames.length ? skillNames.join(" · ") : "None selected"), "muted-value"),
     detailRow("Model calls", escapeText(calls)),
     detailRow("Tool calls", escapeText(tools)),

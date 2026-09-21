@@ -59,6 +59,40 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertIn('"action":"replace_text"', prompt)
         self.assertIn("*** Update File:", prompt)
 
+    def test_model_context_compaction_is_request_only_and_logged(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "context-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="context task",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "context_max_tokens": 180,
+                "allow_commands": ["node"],
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        for index in range(10):
+            harness.messages.extend(
+                [
+                    {"role": "user", "content": f"Request {index} " + ("x" * 100)},
+                    {"role": "assistant", "content": f"Response {index} " + ("y" * 100)},
+                ]
+            )
+
+        original_messages = list(harness.messages)
+        request_messages = harness.model_messages()
+
+        self.assertEqual(harness.messages, original_messages)
+        self.assertTrue(harness.context_metadata["compacted"])
+        self.assertLessEqual(harness.context_metadata["after_tokens"], 180)
+        self.assertIn("context_compacted", (run_dir / "events.jsonl").read_text(encoding="utf-8"))
+        self.assertLess(len(request_messages), len(original_messages))
+
     def test_selected_skills_are_injected_without_unused_skill_text(self) -> None:
         harness = MODULE.AgentHarness(
             task="build task",

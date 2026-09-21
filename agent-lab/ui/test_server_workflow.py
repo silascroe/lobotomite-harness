@@ -54,6 +54,7 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(state["workflow"]["phase"], "intake")
         self.assertEqual(state["workflow"]["status"], "active")
         self.assertTrue((session.run_dir / "workflow.json").is_file())
+        self.assertIn("context", state)
 
     def test_interactive_contract_exposes_exact_replace_text_action(self) -> None:
         self.assertIn("replace_text", MODULE.INTERACTIVE_ACTIONS)

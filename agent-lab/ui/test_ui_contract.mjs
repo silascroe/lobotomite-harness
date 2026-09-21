@@ -61,6 +61,11 @@ test("recovery events have readable activity copy", () => {
   assert.match(app, /recovery_exhausted.*return "error"|return "error".*recovery_exhausted/s);
 });
 
+test("context compaction and targeted edit actions remain visible to the UI contract", () => {
+  assert.match(app, /context_compacted/);
+  assert.match(app, /replace_text/);
+});
+
 test("skill controls expose recorded defaults, overrides, and discovery", () => {
   assert.match(html, /id="skillSummary"/);
   assert.match(html, /id="skillOverride"/);

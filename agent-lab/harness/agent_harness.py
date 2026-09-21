@@ -32,6 +32,7 @@ from workflow import (
     transition,
 )
 from control_loop import RecoveryController, RecoveryDecision
+from context_window import build_context
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 
 
@@ -550,6 +551,15 @@ class AgentHarness:
         self.system_prompt = system_prompt or SYSTEM_PROMPT
         self.logger = RunLogger(run_dir / "events.jsonl")
         self.messages: list[dict[str, str]] = []
+        self.context_metadata: dict[str, Any] = {
+            "compacted": False,
+            "max_tokens": int(self.config.get("context_max_tokens", 6000)),
+            "before_tokens": 0,
+            "after_tokens": 0,
+            "dropped_messages": 0,
+            "message_count": 0,
+            "summary_lines": 0,
+        }
         self.initial_files: dict[str, bytes] = {}
         self.model_calls = 0
         self.tool_calls = 0
@@ -613,6 +623,17 @@ class AgentHarness:
 
     def reasoning_metadata(self) -> dict[str, Any]:
         return reasoning_settings(self.config)
+
+    def model_messages(self) -> list[dict[str, Any]]:
+        result = build_context(
+            self.messages,
+            max_tokens=int(self.config.get("context_max_tokens", 6000)),
+            recent_messages=int(self.config.get("context_recent_messages", 12)),
+        )
+        self.context_metadata = result.metadata()
+        if result.compacted:
+            self.logger.event("context_compacted", **self.context_metadata)
+        return result.messages
 
     def prepare(self) -> None:
         if self.run_dir.exists():
@@ -1193,7 +1214,7 @@ class AgentHarness:
         reasoning = reasoning_settings(self.config)
         payload = {
             "model": self.config.get("model", "local-model"),
-            "messages": self.messages,
+            "messages": self.model_messages(),
             "temperature": float(self.config.get("temperature", 0.2)),
             "top_p": float(self.config.get("top_p", 0.9)),
             "max_tokens": reasoning["max_tokens"],
@@ -1297,6 +1318,7 @@ class AgentHarness:
             "project": str(self.project_dir),
             "workspace_mode": self.workspace_mode,
             "reasoning": self.reasoning_metadata(),
+            "context": dict(self.context_metadata),
             "workflow": self.workflow,
             "workflow_evidence": dict(self.workflow_evidence),
             "skills": self.skill_metadata(),
