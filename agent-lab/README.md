@@ -133,13 +133,13 @@ Non-interactive runs also checkpoint `transcript.json` and `progress.json` after
 Interrupted benchmark runs are resumable. Each run keeps an immutable `initial-project/` snapshot plus `initial-snapshot.json`, restores its transcript, workflow evidence, recovery state, and last checkpoint, and can continue from the last completed turn with:
 
 ```powershell
-$py = 'C:\Users\ringd\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-& $py agent-lab/harness/agent_harness.py --resume-run run-001
+.\scripts\run-agent-lab.ps1 -ResumeRun run-001
 ```
 
 The console exposes `Stop run` while a benchmark is active and `Resume run` when an interrupted record is selected. Stopping terminates the harness worker without deleting the project or audit trail. Resuming gives the worker a fresh configured turn budget while preserving the existing project and audit trail; terminal records are intentionally not restartable.
 
 ```powershell
+$py = 'C:\Users\ringd\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
 & $py agent-lab/checks/check_static_page.py agent-lab/runs/run-001/project
 ```
 
