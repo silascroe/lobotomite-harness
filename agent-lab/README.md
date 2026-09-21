@@ -69,6 +69,8 @@ The current tools are:
 - `workflow_checkpoint` (an observable phase, summary, next action, and artifact list)
 - `finish`
 
+When a project asks for `python` or `py` and Windows has no launcher on `PATH`, the harness falls back to the bundled interpreter that is already running Agent Lab. That keeps validation reproducible without changing how `node` or project-local commands resolve.
+
 Run the first benchmark from the workspace root:
 
 ```powershell

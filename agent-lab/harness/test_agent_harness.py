@@ -540,6 +540,32 @@ stale context from an older read
         with self.assertRaises(MODULE.HarnessError):
             self.harness.validate_command("node hello.js; whoami")
 
+    def test_missing_python_launcher_falls_back_to_the_harness_interpreter(self) -> None:
+        harness = MODULE.AgentHarness(
+            task="run a Python check",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "allow_commands": ["python"],
+            },
+            run_dir=self.run_dir / "python-runtime-run",
+            project_dir=self.run_dir / "python-runtime-run" / "project",
+            template_dir=None,
+        )
+        completed = MODULE.subprocess.CompletedProcess(
+            args=["python", "-m", "unittest"],
+            returncode=0,
+            stdout="ok",
+            stderr="",
+        )
+        with patch.object(MODULE.shutil, "which", return_value=None), patch.object(
+            MODULE.subprocess, "run", return_value=completed
+        ) as run:
+            result = harness.run_command({"command": "python -m unittest"})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(run.call_args.args[0][0], MODULE.sys.executable)
+
     def test_selected_workspace_can_be_existing_and_ignores_dependencies(self) -> None:
         root = Path(self.temp_dir.name)
         selected_run = root / "selected-run"

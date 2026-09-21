@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -1164,10 +1165,14 @@ class AgentHarness:
     def run_command(self, args: dict[str, Any]) -> dict[str, Any]:
         command = args.get("command")
         tokens = self.validate_command(command)
+        executable = Path(tokens[0]).name.lower()
+        execution_tokens = list(tokens)
+        if executable in {"python", "python.exe", "py", "py.exe"} and shutil.which(tokens[0]) is None:
+            execution_tokens[0] = sys.executable
         timeout = int(self.config.get("command_timeout_seconds", 20))
         try:
             completed = subprocess.run(
-                tokens,
+                execution_tokens,
                 cwd=self.project_dir,
                 capture_output=True,
                 text=True,
