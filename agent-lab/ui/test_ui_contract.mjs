@@ -76,6 +76,7 @@ test("tool approval controls expose durable confirm and resume actions", () => {
   assert.match(app, /sessions.*\/approval|\/approval/);
   assert.match(app, /approval_mode/);
   assert.match(app, /Workspace lease/);
+  assert.match(app, /Tool receipt/);
   assert.match(css, /\.approval-control/);
   assert.match(css, /\.approval-job/);
 });
@@ -86,6 +87,13 @@ test("recovery events have readable activity copy", () => {
   assert.match(app, /case "recovery_exhausted"/);
   assert.match(app, /case "workflow_late_evidence"/);
   assert.match(app, /recovery_exhausted.*return "error"|return "error".*recovery_exhausted/s);
+});
+
+test("tool receipt lifecycle has readable activity copy", () => {
+  for (const event of ["tool_call_started", "tool_call_completed", "tool_call_settled", "tool_result_replayed", "tool_outcome_unknown"]) {
+    assert.match(app, new RegExp(`case "${event}"`), `missing ${event} copy`);
+  }
+  assert.match(app, /tool_receipt/);
 });
 
 test("context compaction and targeted edit actions remain visible to the UI contract", () => {

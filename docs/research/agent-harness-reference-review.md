@@ -25,8 +25,12 @@ Agent Lab already had the beginnings of those ideas: JSONL events, workflow
 checkpoints, constrained tools, and a project directory. This pass adds the
 missing narrow controller around them: one repair opportunity for a repeated
 failure, pre-dispatch duplicate-action detection, durable recovery snapshots,
-and honest blocked outcomes. The implementation is native Python and retains
-Agent Lab's own protocol, gates, and safety rules.
+honest blocked outcomes, and durable tool receipts. A receipt records a tool
+call before dispatch, captures its result, and is settled only after the
+observation is persisted. Completed receipts can be replayed as observations;
+pending receipts are marked unknown and require inspection before another
+attempt. The implementation is native Python and retains Agent Lab's own
+protocol, gates, and safety rules.
 
 The references are inspiration, not a clone target. If code is ever reused,
 license and attribution review must happen first; this slice reuses no upstream

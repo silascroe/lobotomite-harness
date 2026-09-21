@@ -45,6 +45,7 @@ from approval import (
 from review import build_review_packet, fingerprint, review_status
 from skills import SkillError, find_skills, public_selection, resolve_skill_selection, skill_prompt
 from workspace_lock import WorkspaceBusyError, WorkspaceLease, acquire as acquire_workspace_lease, read_lock
+from tool_receipt import complete_receipt, mark_unknown, new_receipt, public_receipt, settle_receipt
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -622,6 +623,8 @@ class AgentHarness:
         self.approval_record: dict[str, Any] | None = None
         self.pending_approval: dict[str, Any] | None = None
         self.approval_grant: dict[str, Any] | None = None
+        self.tool_receipt: dict[str, Any] | None = None
+        self.tool_receipt_recovery_needed = False
         self.started_at = time.monotonic()
         self.status = "not_started"
         self.finish_summary = ""
@@ -883,6 +886,12 @@ class AgentHarness:
         harness.approval_record = load_json(approval_path) if approval_path.is_file() else None
         if harness.approval_record and harness.approval_record.get("status") == "pending":
             harness.pending_approval = harness.approval_record
+        receipt_path = run_dir / "tool-receipt.json"
+        harness.tool_receipt = load_json(receipt_path) if receipt_path.is_file() else None
+        harness.tool_receipt_recovery_needed = bool(
+            harness.tool_receipt
+            and harness.tool_receipt.get("status") in {"pending", "completed", "unknown"}
+        )
         harness.finish_summary = str(progress.get("summary") or "")
         harness.blocked_reason = str(progress.get("blocked_reason") or "")
         harness.recovery = RecoveryController.from_snapshot(progress.get("recovery") or summary.get("recovery"))
@@ -1430,6 +1439,67 @@ class AgentHarness:
             return public_request(self.approval_record)
         return {"status": "none"}
 
+    def tool_receipt_view(self) -> dict[str, Any]:
+        if self.tool_receipt is None:
+            return {"status": "none"}
+        return public_receipt(self.tool_receipt)
+
+    def begin_tool_receipt(
+        self,
+        action: str,
+        args: dict[str, Any],
+        *,
+        turn: int | None = None,
+        step: int | None = None,
+    ) -> None:
+        self.tool_receipt = new_receipt(action, args, turn=turn, step=step)
+        self.tool_receipt_recovery_needed = False
+        atomic_write_json(self.run_dir / "tool-receipt.json", self.tool_receipt)
+        self.logger.event("tool_call_started", receipt=public_receipt(self.tool_receipt))
+
+    def complete_tool_receipt(self, result: dict[str, Any]) -> None:
+        if self.tool_receipt is None or self.tool_receipt.get("status") != "pending":
+            return
+        self.tool_receipt = complete_receipt(self.tool_receipt, result)
+        atomic_write_json(self.run_dir / "tool-receipt.json", self.tool_receipt)
+        self.logger.event("tool_call_completed", receipt=public_receipt(self.tool_receipt))
+
+    def settle_tool_receipt(self) -> None:
+        if self.tool_receipt is None or self.tool_receipt.get("status") not in {"completed", "unknown"}:
+            return
+        self.tool_receipt = settle_receipt(self.tool_receipt)
+        self.tool_receipt_recovery_needed = False
+        atomic_write_json(self.run_dir / "tool-receipt.json", self.tool_receipt)
+        self.logger.event("tool_call_settled", receipt=public_receipt(self.tool_receipt))
+
+    def recover_tool_receipt(self, *, force: bool = False) -> dict[str, Any] | None:
+        if not force and not self.tool_receipt_recovery_needed:
+            return None
+        receipt = self.tool_receipt
+        if receipt is None or receipt.get("status") not in {"pending", "completed", "unknown"}:
+            self.tool_receipt_recovery_needed = False
+            return None
+        action = str(receipt.get("action") or "unknown")
+        if receipt.get("status") == "completed" and isinstance(receipt.get("result"), dict):
+            result = dict(receipt["result"])
+            instruction = "The previous worker completed this tool call before stopping. Continue from its result; do not repeat the action."
+            event = "tool_result_replayed"
+        else:
+            if receipt.get("status") == "pending":
+                self.tool_receipt = mark_unknown(receipt)
+                atomic_write_json(self.run_dir / "tool-receipt.json", self.tool_receipt)
+            result = {
+                "ok": False,
+                "error": self.tool_receipt.get("recovery")
+                or "The previous tool outcome is unknown. Inspect the project before attempting the action again.",
+                "outcome_unknown": True,
+            }
+            instruction = "The previous tool outcome is unknown. Inspect the project before attempting that action again; do not repeat it blindly."
+            event = "tool_outcome_unknown"
+        self.tool_receipt_recovery_needed = False
+        self.logger.event(event, receipt=public_receipt(self.tool_receipt))
+        return {"tool": action, "result": result, "instruction": instruction}
+
     def request_approval(
         self,
         action: str,
@@ -1674,6 +1744,7 @@ class AgentHarness:
                     "reviewed_fingerprint": self.review_packet.get("current_fingerprint") if self.review_packet else None,
                 },
                 "approval": self.approval_view(),
+                "tool_receipt": self.tool_receipt_view(),
                 "workspace_lock": self.workspace_lock_view(),
                 "recovery": self.recovery.snapshot(),
                 "blocked_reason": self.blocked_reason,
@@ -1749,6 +1820,7 @@ class AgentHarness:
                 "diff_truncated": bool(self.review_packet.get("diff_truncated", False)) if self.review_packet else False,
             },
             "approval": self.approval_view(),
+            "tool_receipt": self.tool_receipt_view(),
             "workspace_lock": self.workspace_lock_view(),
             "skills": self.skill_metadata(),
             "recovery": self.recovery.snapshot(),
@@ -1794,24 +1866,42 @@ class AgentHarness:
                 )
                 self.save_progress(turn=pending_turn, checkpoint="approval_resume")
             else:
-                last_message = self.messages[-1] if self.messages else {}
-                if self.checkpoint == "model_response" and last_message.get("role") == "assistant":
-                    pending_response = last_message.get("content")
-                    pending_turn = self.current_turn
-                elif self.checkpoint == "model_call" and last_message.get("role") == "assistant":
-                    pending_response = last_message.get("content")
-                    pending_turn = self.current_turn + 1
-                start_turn = pending_turn if pending_turn is not None else self.current_turn + 1
-                end_turn = start_turn + max_turns
-                self.logger.event(
-                    "run_resumed",
-                    turn=self.current_turn,
-                    checkpoint=self.checkpoint,
-                    resume_count=self.resume_count,
-                )
-                correction = "" if pending_response is not None else "The previous worker stopped. Continue from the last saved transcript and tool result."
-                if pending_response is None:
-                    self.save_progress(checkpoint="resume")
+                recovery_observation = None
+                if self.tool_receipt_recovery_needed:
+                    recovery_observation = self.recover_tool_receipt(force=True)
+                if recovery_observation is not None:
+                    self.messages.append(
+                        {"role": "user", "content": self.user_content(json_text(recovery_observation))}
+                    )
+                    recovery_turn = int(self.tool_receipt.get("turn") or self.current_turn or 1)
+                    self.save_transcript()
+                    self.save_progress(turn=recovery_turn, checkpoint="tool_recovery")
+                    self.settle_tool_receipt()
+                    self.save_progress(turn=recovery_turn, checkpoint="tool_recovery_settled")
+                    start_turn = recovery_turn + 1
+                    end_turn = start_turn + max_turns
+                    correction = ""
+                    self.logger.event("run_resumed_from_tool_receipt", turn=recovery_turn, resume_count=self.resume_count)
+                    recovery_observation = None
+                else:
+                    last_message = self.messages[-1] if self.messages else {}
+                    if self.checkpoint == "model_response" and last_message.get("role") == "assistant":
+                        pending_response = last_message.get("content")
+                        pending_turn = self.current_turn
+                    elif self.checkpoint == "model_call" and last_message.get("role") == "assistant":
+                        pending_response = last_message.get("content")
+                        pending_turn = self.current_turn + 1
+                    start_turn = pending_turn if pending_turn is not None else self.current_turn + 1
+                    end_turn = start_turn + max_turns
+                    self.logger.event(
+                        "run_resumed",
+                        turn=self.current_turn,
+                        checkpoint=self.checkpoint,
+                        resume_count=self.resume_count,
+                    )
+                    correction = "" if pending_response is not None else "The previous worker stopped. Continue from the last saved transcript and tool result."
+                    if pending_response is None:
+                        self.save_progress(checkpoint="resume")
         else:
             if approval_decision is not None:
                 raise HarnessError("approval decisions only apply when resuming a run")
@@ -1969,6 +2059,7 @@ class AgentHarness:
                         "error": "operator denied this action; choose a different approach or explain the blocker",
                     }
                 else:
+                    self.begin_tool_receipt(action, args, turn=turn, step=turn)
                     self.tool_calls += 1
                     try:
                         if approval_resolution == "approve":
@@ -1977,6 +2068,7 @@ class AgentHarness:
                             result = self.dispatch(action, args)
                     except HarnessError as exc:
                         result = {"ok": False, "error": str(exc)}
+                    self.complete_tool_receipt(result)
                 if result.get("ok") is False and result.get("approval") != "denied":
                     self.had_tool_error = True
                     detail = f"{action}: {result.get('error') or result.get('stderr') or 'tool returned a failure'}"
@@ -2003,6 +2095,8 @@ class AgentHarness:
                 self.messages.append({"role": "user", "content": self.user_content(json_text(observation))})
                 self.save_transcript()
                 self.save_progress(turn=turn, checkpoint="tool_result")
+                self.settle_tool_receipt()
+                self.save_progress(turn=turn, checkpoint="tool_result_settled")
 
             self.status = "blocked"
             self.checkpoint = "terminal"

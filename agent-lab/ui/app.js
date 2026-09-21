@@ -381,6 +381,11 @@ function eventCopy(event) {
     case "job_stop_requested": return "Turn stopped by the user; waiting for retry";
     case "job_retry_requested": return `Retry started (attempt ${data.job?.attempt || "next"})`;
     case "job_progress": return `Worker checkpoint: ${data.action || "progress"}`;
+    case "tool_call_started": return `Tool call started: ${data.receipt?.action || "tool"}`;
+    case "tool_call_completed": return `Tool call completed: ${data.receipt?.action || "tool"}`;
+    case "tool_call_settled": return `Tool result recorded: ${data.receipt?.action || "tool"}`;
+    case "tool_result_replayed": return `Recovered the completed ${data.receipt?.action || "tool"} result without repeating it`;
+    case "tool_outcome_unknown": return `Tool outcome unknown: inspect before repeating ${data.receipt?.action || "the action"}`;
     case "recovery_retry": {
       const decision = data.decision || {};
       return `Recovery retry ${decision.attempt || "?"}/${decision.limit || "?"}: ${decision.detail || "repairing the last failure"}`;
@@ -439,7 +444,7 @@ function eventClass(event) {
     return phase === "blocked" ? "error" : phase === "complete" ? "success" : "tool";
   }
   if (["harness_error", "finish_rejected", "turn_limit", "interactive_step_limit", "job_interrupted", "job_stop_requested", "recovery_exhausted"].includes(event.event)) return "error";
-  if (["recovery_retry", "recovery_duplicate_action", "workflow_late_evidence", "context_compacted"].includes(event.event)) return "tool";
+  if (["recovery_retry", "recovery_duplicate_action", "workflow_late_evidence", "context_compacted", "tool_call_started", "tool_call_completed", "tool_call_settled", "tool_result_replayed", "tool_outcome_unknown"].includes(event.event)) return "tool";
   if (event.event === "tool_result") return "tool";
   return "";
 }
@@ -674,6 +679,16 @@ function renderInspector(record = state.activeRecord) {
   const skills = record?.skills || {};
   const skillNames = Array.isArray(skills.resolved) ? skills.resolved.map((item) => item.name).filter(Boolean) : [];
   const workspaceLock = record?.workspace_lock || {};
+  const toolReceipt = record?.tool_receipt || {};
+  const receiptLabel = toolReceipt.status === "completed"
+    ? "Completed; awaiting transcript settlement"
+    : toolReceipt.status === "unknown"
+      ? "Unknown; inspect before repeating"
+      : toolReceipt.status === "settled"
+        ? "Settled"
+        : toolReceipt.status === "pending"
+          ? "In progress"
+          : "None";
   renderReasoningControl(record);
   renderApprovalControl(record);
   $("inspectorContent").innerHTML = [
@@ -682,6 +697,7 @@ function renderInspector(record = state.activeRecord) {
     detailRow("Model", escapeText(model)),
     detailRow("Reasoning", escapeText(reasoningLabel)),
     detailRow("Tool approvals", escapeText(normalizeApprovalMode(record?.approval_mode || state.approvalMode) === "confirm" ? "Ask before edits" : "Autonomous")),
+    detailRow("Tool receipt", escapeText(receiptLabel), "muted-value"),
     detailRow("Workspace lease", escapeText(workspaceLock.status === "held" ? "Held by this worker" : workspaceLock.status === "none" ? "Not held" : "Unavailable"), "muted-value"),
     detailRow("Thinking budget", escapeText(reasoningBudget), "muted-value"),
     detailRow("Response cap", `${formatTokenCount(reasoningMax)} tokens`, "muted-value"),

@@ -43,6 +43,7 @@ from agent_harness import (  # noqa: E402
     WorkspaceBusyError,
 )
 from approval import normalize_mode, public_request  # noqa: E402
+from tool_receipt import public_receipt  # noqa: E402
 from skills import (  # noqa: E402
     DEFAULT_SKILL_NAMES,
     SkillError,
@@ -317,6 +318,7 @@ def run_state(run_id: str) -> dict[str, Any]:
     workflow = load_workflow(run_dir / "workflow.json")
     review = review_from(run_dir, project)
     approval = approval_from(run_dir)
+    tool_receipt = tool_receipt_from(run_dir)
     with PROCESS_LOCK:
         process = PROCESSES.get(run_id)
         output = list(OUTPUTS.get(run_id, []))
@@ -348,6 +350,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "workflow": workflow,
         "review": review,
         "approval": approval,
+        "tool_receipt": tool_receipt,
         "workspace_lock": summary.get("workspace_lock") or progress.get("workspace_lock") or {"status": "unknown"},
         "skills": summary.get("skills", {}),
         "model": summary.get("model", ""),
@@ -379,6 +382,7 @@ def run_summaries() -> list[dict[str, Any]]:
                 "workflow": state.get("workflow", {}),
                 "review": state.get("review", {}),
                 "approval": state.get("approval", {}),
+                "tool_receipt": state.get("tool_receipt", {}),
                 "workspace_lock": state.get("workspace_lock", {}),
                 "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
@@ -470,6 +474,11 @@ def review_from(run_dir: Path, project: Path) -> dict[str, Any]:
 def approval_from(run_dir: Path) -> dict[str, Any]:
     record = read_json(run_dir / "approval.json")
     return public_request(record) if record else {"status": "none"}
+
+
+def tool_receipt_from(run_dir: Path) -> dict[str, Any]:
+    record = read_json(run_dir / "tool-receipt.json")
+    return public_receipt(record) if record else {"status": "none"}
 
 
 class InteractiveSession:
@@ -592,6 +601,14 @@ class InteractiveSession:
             self.harness.approval_record = persisted_approval
             if persisted_approval.get("status") == "pending":
                 self.harness.pending_approval = persisted_approval
+        persisted_receipt = read_json(self.run_dir / "tool-receipt.json")
+        if persisted_receipt:
+            self.harness.tool_receipt = persisted_receipt
+            self.harness.tool_receipt_recovery_needed = persisted_receipt.get("status") in {
+                "pending",
+                "completed",
+                "unknown",
+            }
         self.harness.initial_files = self.harness.snapshot_files()
         for name in ("model_calls", "tool_calls"):
             try:
@@ -668,6 +685,7 @@ class InteractiveSession:
                 "workflow": self.harness.workflow,
                 "review": review_from(self.run_dir, self.project_dir),
                 "approval": self.harness.approval_view(),
+                "tool_receipt": self.harness.tool_receipt_view(),
                 "workspace_lock": self.harness.workspace_lock_view(),
                 "recovery": self.harness.recovery.snapshot(),
                 "skills": self.harness.skill_metadata(),
@@ -702,6 +720,7 @@ class InteractiveSession:
             "workflow": self.harness.workflow,
             "review": review_from(self.run_dir, self.project_dir),
             "approval": self.harness.approval_view(),
+            "tool_receipt": self.harness.tool_receipt_view(),
             "workspace_lock": self.harness.workspace_lock_view(),
             "recovery": self.harness.recovery.snapshot(),
             "skills": self.harness.skill_metadata(),
@@ -882,6 +901,15 @@ class InteractiveSession:
                     if self.job.get("job_id") == job_id and self.job.get("status") == "running":
                         self.job = mark_user_message_persisted(self.job)
                 self.save_meta()
+            elif self.harness.tool_receipt_recovery_needed:
+                recovery_observation = self.harness.recover_tool_receipt(force=True)
+                if recovery_observation is not None:
+                    self.harness.messages.append(
+                        {"role": "user", "content": self.harness.user_content(json_text(recovery_observation))}
+                    )
+                    self.save_meta()
+                    self.harness.settle_tool_receipt()
+                    self.save_meta()
             max_steps = int(self.harness.config.get("max_turns", 12))
             correction = ""
             forced_action: tuple[str, dict[str, Any], str] | None = None
@@ -1010,6 +1038,7 @@ class InteractiveSession:
                         "error": "operator denied this action; choose a different approach or explain the blocker",
                     }
                 else:
+                    self.harness.begin_tool_receipt(action, args, step=step)
                     self.harness.tool_calls += 1
                     try:
                         if approval_resolution == "approve":
@@ -1018,6 +1047,7 @@ class InteractiveSession:
                             result = self.harness.dispatch(action, args)
                     except HarnessError as exc:
                         result = {"ok": False, "error": str(exc)}
+                    self.harness.complete_tool_receipt(result)
                 if result.get("ok") is False and result.get("approval") != "denied":
                     self.harness.had_tool_error = True
                     detail = f"{action}: {result.get('error') or result.get('stderr') or 'tool returned a failure'}"
@@ -1043,7 +1073,10 @@ class InteractiveSession:
                     ),
                 }
                 self.harness.messages.append({"role": "user", "content": self.harness.user_content(json_text(observation))})
-                self._checkpoint_worker(job_id, step, "tool_result")
+                if not self._checkpoint_worker(job_id, step, "tool_result"):
+                    return
+                self.harness.settle_tool_receipt()
+                self.save_meta()
             else:
                 self.add_assistant_message("I hit the action limit for this message. Tell me whether you want me to continue.")
                 self.harness.logger.event("interactive_step_limit", max_steps=max_steps)

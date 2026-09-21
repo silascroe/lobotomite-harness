@@ -219,6 +219,47 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertEqual(summary["status"], "success")
         self.assertEqual(summary["summary"], "recovered")
 
+    def test_resume_replays_a_completed_tool_receipt_without_dispatching_again(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "receipt-resume-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="resume a completed tool call",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "max_turns": 4,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.status = "running"
+        harness.current_turn = 1
+        harness.tool_calls = 1
+        harness.begin_tool_receipt("write_file", {"path": "index.html", "content": "<main>done</main>\n"}, turn=1, step=1)
+        harness.complete_tool_receipt({"ok": True, "path": "index.html", "changed": True})
+        harness.save_transcript()
+        harness.save_progress(turn=1, checkpoint="tool_result")
+
+        restored = MODULE.AgentHarness.resume_from_run(run_dir)
+        self.assertTrue(restored.tool_receipt_recovery_needed)
+        restored.call_model = lambda: {
+            "content": '{"action":"finish","args":{"status":"success","summary":"recovered"}}',
+            "reasoning_content": "",
+            "finish_reason": "stop",
+            "usage": {},
+        }
+        restored.dispatch = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("tool must not replay"))
+
+        self.assertEqual(restored.run(resume=True), 0)
+        receipt = MODULE.load_json(run_dir / "tool-receipt.json")
+        transcript = json.loads((run_dir / "transcript.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["status"], "settled")
+        self.assertTrue(any("previous worker completed this tool call" in item.get("content", "") for item in transcript if item.get("role") == "user"))
+        self.assertEqual(restored.tool_calls, 1)
+
     def test_selected_skills_are_injected_without_unused_skill_text(self) -> None:
         harness = MODULE.AgentHarness(
             task="build task",
