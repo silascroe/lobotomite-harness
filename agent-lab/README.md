@@ -75,7 +75,7 @@ Run the first benchmark from the workspace root:
 .\scripts\run-agent-lab.ps1 -RunId run-001
 ```
 
-The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `transcript.json`, `summary.json`, `task.md`, and a copy of the config.
+The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config.
 
 To swap Gemma 4 sizes, stop the running llama.cpp process and start the matching file:
 
@@ -110,7 +110,7 @@ The Run dialog shows the selected skills and lets you enable project-local skill
 
 `find_skills` is a discovery-only action. Local catalog search is available to the model and UI without installation. Searching skills.sh is deliberately a separate, explicit UI action and requires confirmation; it returns recommendations only and never installs or activates remote code.
 
-Evaluated runs use the workflow gates by default. A successful finish must have observable evidence for inspect, plan, implement, and verify. Inspection comes from successful reads/listing, implementation from writes or patches, and verification from a successful validation command after a mutation. Interactive chats and explicitly ungated custom runs remain flexible; use `--no-gates` only when the task is intentionally outside benchmark evaluation.
+Evaluated runs use the workflow gates by default. A successful finish must have observable evidence for inspect, plan, implement, verify, and review. Inspection comes from successful reads/listing, implementation from writes or patches, verification from a successful validation command after a mutation, and review from a fresh `git_diff` after the latest mutation. Interactive chats and explicitly ungated custom runs remain flexible; use `--no-gates` only when the task is intentionally outside benchmark evaluation.
 
 ### Restart-safe conversations
 

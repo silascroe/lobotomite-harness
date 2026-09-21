@@ -167,6 +167,7 @@ class HarnessUnitTests(unittest.TestCase):
         )
         harness.dispatch("write_file", {"path": "index.html", "content": "<main>ok</main>\n"})
         harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+        harness.dispatch("git_diff", {})
 
         self.assertEqual(harness.missing_workflow_gates(), [])
         self.assertIsNone(harness.finish_issue({"status": "success"}))
@@ -473,6 +474,40 @@ class HarnessUnitTests(unittest.TestCase):
         result = harness.dispatch("run_command", {"command": "node --check broken.js"})
         self.assertNotEqual(result["exit_code"], 0)
         self.assertEqual(harness.workflow["phase"], "implement")
+
+    def test_gated_success_requires_fresh_diff_review_after_verification(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "review-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="review task",
+            config={
+                "max_file_bytes": 60000,
+                "max_total_project_bytes": 500000,
+                "allow_commands": ["cmd"],
+                "require_workflow_gates": True,
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.dispatch("list_files", {"path": "."})
+        harness.dispatch(
+            "workflow_checkpoint",
+            {"phase": "plan", "summary": "Plan recorded.", "next_action": "Implement."},
+        )
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>one</main>\n"})
+        harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+
+        self.assertIn("review", harness.missing_workflow_gates())
+        self.assertIn("review", harness.finish_issue({"status": "success"}))
+
+        harness.dispatch("git_diff", {})
+        self.assertNotIn("review", harness.missing_workflow_gates())
+
+        harness.dispatch("write_file", {"path": "index.html", "content": "<main>two</main>\n"})
+        self.assertIn("review", harness.missing_workflow_gates())
 
     def _fake_run_harness(self, responses: list[str], *, gated: bool = False) -> MODULE.AgentHarness:
         root = Path(self.temp_dir.name)

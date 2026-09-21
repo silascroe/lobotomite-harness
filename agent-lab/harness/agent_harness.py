@@ -503,6 +503,7 @@ Rules:
 - Prefer replace_text for a small exact edit: it requires an exact match count and keeps the original file unchanged when the count is wrong.
 - apply_patch hunks must follow a file header such as `*** Update File: styles.css`.
 - Use run_command to validate your work. It has a small allowlist and no shell.
+- Before finishing a gated task, use git_diff to review the complete project change after the latest validation.
 - Preserve existing project work unless the user explicitly asks you to replace it.
 - There is no network access for this task. Do not try to install packages or fetch assets.
 - When the task is complete, call finish with a short honest summary.
@@ -583,8 +584,9 @@ class AgentHarness:
         self.workflow_evidence = {
             "inspect": False,
             "plan": False,
-            "implement": False,
-            "verify": False,
+        "implement": False,
+        "verify": False,
+        "review": False,
         }
 
     @property
@@ -621,7 +623,7 @@ class AgentHarness:
     def missing_workflow_gates(self) -> list[str]:
         if not bool(self.config.get("require_workflow_gates", False)):
             return []
-        return [name for name in ("inspect", "plan", "implement", "verify") if not self.workflow_evidence.get(name)]
+        return [name for name in ("inspect", "plan", "implement", "verify", "review") if not self.workflow_evidence.get(name)]
 
     def reasoning_metadata(self) -> dict[str, Any]:
         return reasoning_settings(self.config)
@@ -1120,9 +1122,12 @@ class AgentHarness:
             elif action in {"write_file", "replace_text", "apply_patch"}:
                 self.workflow_evidence["implement"] = True
                 self.workflow_evidence["verify"] = False
+                self.workflow_evidence["review"] = False
                 self.validation_passed = False
             elif action == "run_command" and result.get("exit_code") == 0 and self.workflow_evidence["implement"]:
                 self.workflow_evidence["verify"] = True
+            elif action == "git_diff":
+                self.workflow_evidence["review"] = True
         next_state = observe_tool(self.workflow, action, result)
         if next_state == self.workflow:
             return
