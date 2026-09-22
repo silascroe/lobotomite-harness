@@ -165,6 +165,24 @@ test("run failures render readable summaries", () => {
   assert.match(app, /readableSummary\(summary\.summary\)/);
 });
 
+test("runs expose a live work surface without hiding the detailed ledger", () => {
+  for (const id of ["runActivityPanel", "runActivityHeading", "runActivityState", "runActivityNow", "runActivityTimeline"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `missing #${id}`);
+  }
+  assert.match(html, /id="runActivityState"[^>]*role="status"/);
+  assert.match(html, /id="runActivityTimeline"[^>]*aria-live="polite"/);
+  assert.match(app, /function renderRunActivity\(/);
+  assert.match(app, /renderRunActivity\(run\)/);
+  assert.match(css, /\.run-activity-panel/);
+  assert.match(css, /\.run-activity-timeline/);
+});
+
+test("run lifecycle checkpoints use human-readable vocabulary", () => {
+  assert.match(app, /case "workspace_lock_acquired"/);
+  assert.match(app, /case "workspace_lock_released"/);
+  assert.match(app, /case "invalid_model_action"/);
+});
+
 test("project identity and run launch copy do not inherit stale record state", () => {
   assert.match(app, /topbar\.textContent = project\?\.name/);
   assert.match(app, /dialogId === ["']runDialog["'][\s\S]*launchNote/);

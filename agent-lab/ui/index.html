@@ -191,12 +191,30 @@
                 <button id="runDetailsButton" class="secondary-button" type="button">Open details</button>
               </div>
             </header>
+            <section id="runActivityPanel" class="run-activity-panel" aria-labelledby="runActivityHeading" hidden>
+              <header class="run-activity-header">
+                <div>
+                  <p class="run-activity-kicker">Live trace</p>
+                  <h2 id="runActivityHeading">The agent is working</h2>
+                  <p id="runActivityDescription">Plain-language checkpoints from the model, tools, and workflow.</p>
+                </div>
+                <div class="run-activity-meta">
+                  <span id="runActivityState" class="run-activity-state running" role="status" aria-live="polite">Running</span>
+                  <small id="runActivityCount">0 recorded steps</small>
+                </div>
+              </header>
+              <div id="runActivityNow" class="run-activity-now" role="status" aria-live="polite">
+                <span class="run-activity-now-label">Now</span>
+                <span class="run-activity-now-copy">Starting the run…</span>
+              </div>
+              <div id="runActivityTimeline" class="run-activity-timeline" aria-live="polite"></div>
+            </section>
             <div class="run-hero">
               <div class="run-hero-mark" aria-hidden="true">AL</div>
               <div>
                 <small>Evaluation record</small>
-                <h2>The work, not the telemetry</h2>
-                <p>Workflow progress, activity, files, and raw output are available in Details without crowding this surface.</p>
+                <h2>The work, in view</h2>
+                <p>The live trace keeps the important moves visible. Details still holds the complete workflow, change review, artifacts, and raw process output.</p>
               </div>
             </div>
           </article>

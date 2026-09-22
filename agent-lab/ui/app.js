@@ -425,6 +425,8 @@ function setStatus(status) {
 function eventCopy(event) {
   const data = event.data || {};
   switch (event.event) {
+    case "workspace_lock_acquired": return "Workspace reserved for this run";
+    case "workspace_lock_released": return "Workspace released";
     case "run_created": return data.mode === "selected" ? "Run attached to the selected project folder" : "Run started in a managed project folder";
     case "session_ready": return data.mode === "selected" ? "Conversation attached to the selected project folder" : "Conversation opened with a managed project folder";
     case "session_rehydrated": return "Conversation restored from disk";
@@ -455,6 +457,7 @@ function eventCopy(event) {
       const dropped = data.dropped_messages || 0;
       return `Context compacted ${before} → ${after} tokens; ${dropped} older messages summarized`;
     }
+    case "invalid_model_action": return `Model output needed repair: ${data.error || "the action was not understood"}`;
     case "model_response": return `Model replied${data.finish_reason ? ` (${data.finish_reason})` : ""}`;
     case "tool_result": {
       const action = data.action || "tool";
@@ -516,6 +519,121 @@ function renderActivity(events) {
       <div class="activity-title">${escapeText(eventCopy(event))}</div>
     </div>`).join("");
   container.scrollTop = container.scrollHeight;
+}
+
+function compactActivityCopy(event) {
+  const copy = eventCopy(event).replace(/\s+/g, " ").trim();
+  return copy.length > 180 ? `${copy.slice(0, 177)}…` : copy;
+}
+
+function activityKindLabel(event) {
+  const labels = {
+    workspace_lock_acquired: "Workspace",
+    workspace_lock_released: "Workspace",
+    run_created: "Run",
+    session_ready: "Session",
+    session_rehydrated: "Recovery",
+    invalid_model_action: "Model",
+    model_response: "Model",
+    assistant_message: "Reply",
+    tool_call_started: "Tool call",
+    tool_call_completed: "Tool call",
+    tool_call_settled: "Tool result",
+    tool_result: "Tool result",
+    workflow_phase: "Workflow",
+    workflow_late_evidence: "Workflow",
+    harness_error: "Error",
+    finish: "Run",
+  };
+  return labels[event.event] || "Checkpoint";
+}
+
+function runActivityStatus(status) {
+  const labels = {
+    running: "Working",
+    waiting_approval: "Waiting for approval",
+    success: "Finished",
+    complete: "Finished",
+    error: "Needs attention",
+    failed: "Needs attention",
+    interrupted: "Interrupted",
+    blocked: "Blocked",
+    ready: "Ready",
+  };
+  return labels[status] || statusLabel(status);
+}
+
+function runActivityTone(status) {
+  if (["error", "failed"].includes(status)) return "error";
+  if (["waiting_approval", "blocked"].includes(status)) return "waiting";
+  if (["success", "complete"].includes(status)) return "complete";
+  if (status === "interrupted") return "interrupted";
+  return "running";
+}
+
+function runActivityHeading(status) {
+  if (status === "running") return "The agent is working";
+  if (status === "waiting_approval") return "The agent needs you";
+  if (["error", "failed"].includes(status)) return "The run needs attention";
+  if (["success", "complete"].includes(status)) return "The run is complete";
+  if (status === "interrupted") return "The run was interrupted";
+  if (status === "blocked") return "The run is blocked";
+  return "Run activity";
+}
+
+function runActivityCurrentCopy(run, latestEvent) {
+  const status = run.status || "idle";
+  if (status === "running") return latestEvent ? compactActivityCopy(latestEvent) : "Starting the run…";
+  if (status === "waiting_approval") return "Waiting for your approval before the next change.";
+  if (["error", "failed"].includes(status)) {
+    return latestEvent?.event === "harness_error"
+      ? compactActivityCopy(latestEvent)
+      : readableSummary(run.summary?.summary) || "The run stopped before it could finish.";
+  }
+  if (["success", "complete"].includes(status)) return latestEvent ? compactActivityCopy(latestEvent) : "The run finished.";
+  if (status === "interrupted") return "The run stopped partway through. Retry or resume when ready.";
+  if (status === "blocked") return "The workflow is blocked. Open Details to see what needs attention.";
+  return latestEvent ? compactActivityCopy(latestEvent) : "Waiting to start.";
+}
+
+function renderRunActivity(run) {
+  const panel = $("runActivityPanel");
+  const timeline = $("runActivityTimeline");
+  if (!panel || !timeline) return;
+
+  const events = Array.isArray(run.events) ? run.events.filter((event) => event && event.event) : [];
+  const visibleEvents = events.slice(-80);
+  const latestEvent = events[events.length - 1];
+  const status = run.status || "idle";
+  const stateElement = $("runActivityState");
+  const headingElement = $("runActivityHeading");
+  const countElement = $("runActivityCount");
+  const nowElement = $("runActivityNow");
+
+  headingElement.textContent = runActivityHeading(status);
+  stateElement.className = `run-activity-state ${runActivityTone(status)}`;
+  stateElement.textContent = runActivityStatus(status);
+  countElement.textContent = `${events.length} recorded step${events.length === 1 ? "" : "s"}`;
+  nowElement.innerHTML = `<span class="run-activity-now-label">Now</span><span class="run-activity-now-copy">${escapeText(runActivityCurrentCopy(run, latestEvent))}</span>`;
+
+  if (!visibleEvents.length) {
+    timeline.className = "run-activity-timeline empty-panel";
+    timeline.innerHTML = '<div class="run-activity-empty">The run is starting. The first checkpoint will appear here.</div>';
+  } else {
+    timeline.className = "run-activity-timeline";
+    timeline.innerHTML = visibleEvents.map((event, index) => {
+      const isCurrent = event === latestEvent && status === "running";
+      return `<article class="run-activity-entry ${eventClass(event)}${isCurrent ? " current" : ""}" data-event-kind="${escapeText(event.event)}">
+        <span class="run-activity-marker" aria-hidden="true"></span>
+        <div class="run-activity-body">
+          <div class="run-activity-line"><span class="run-activity-kind">${escapeText(activityKindLabel(event))}</span><time>${escapeText(formatTime(event.timestamp))}</time></div>
+          <p class="run-activity-copy">${escapeText(compactActivityCopy(event))}</p>
+        </div>
+      </article>`;
+    }).join("");
+    timeline.scrollTop = timeline.scrollHeight;
+  }
+  panel.hidden = false;
 }
 
 function renderFiles(files) {
@@ -795,6 +913,7 @@ function renderRun(run) {
   $("turnCount").textContent = summary.model_calls ? `${summary.model_calls} model calls · ${summary.tool_calls || 0} tool calls` : "running";
   $("rawOutput").textContent = (run.output || []).join("\n") || "No process output yet.";
   setStatus(run.status);
+  renderRunActivity(run);
   const resumeButton = $("resumeRunButton");
   if (resumeButton) {
     resumeButton.hidden = run.status !== "interrupted";
