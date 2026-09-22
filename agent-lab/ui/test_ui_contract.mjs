@@ -4,6 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const uiDir = fileURLToPath(new URL("./", import.meta.url));
+const tasksDir = fileURLToPath(new URL("../tasks/", import.meta.url));
 const html = readFileSync(`${uiDir}index.html`, "utf8");
 const app = readFileSync(`${uiDir}app.js`, "utf8");
 const css = readFileSync(`${uiDir}styles.css`, "utf8");
@@ -13,6 +14,36 @@ try {
 } catch (error) {
   favicon = "";
 }
+
+test("built-in run catalog contains focused gate-compatible presets", () => {
+  const expected = [
+    ["001-static-page.md", "Static page smoke test"],
+    ["002-file-roundtrip.md", "File round-trip smoke test"],
+    ["003-structured-validation.md", "Structured validation smoke test"],
+    ["004-mini-project.md", "Mini project smoke test"],
+  ];
+  for (const [name, title] of expected) {
+    const content = readFileSync(`${tasksDir}${name}`, "utf8");
+    assert.match(content, new RegExp(`^# ${title}$`, "m"), `${name} title`);
+    assert.match(content, /workflow_checkpoint/);
+    assert.match(content, /git_diff/);
+    assert.match(content, /finish/i);
+  }
+  const catalog = JSON.parse(readFileSync(`${tasksDir}catalog.json`, "utf8"));
+  assert.deepEqual(Object.keys(catalog.tasks).sort(), expected.map(([name]) => name).sort());
+  for (const entry of Object.values(catalog.tasks)) {
+    assert.equal(typeof entry.description, "string");
+    assert.ok(entry.gates);
+    assert.equal(entry.gates.require_workflow_gates, true);
+  }
+});
+
+test("run preset selection exposes its purpose before launch", () => {
+  assert.match(html, /id="taskPresetDescription"/);
+  assert.match(app, /function renderTaskPresetDescription\(/);
+  assert.match(app, /task\?\.description/);
+  assert.match(app, /renderTaskPresetDescription\(/);
+});
 
 test("shell exposes separate Chats and Runs modes", () => {
   assert.match(html, /id="chatsModeButton"[^>]*aria-controls="chatNavigation chatSurface"/);

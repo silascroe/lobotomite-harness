@@ -13,4 +13,4 @@ Create `index.html`, `styles.css`, and `app.js` in the project directory. The pa
 
 Keep the design coherent and restrained: dark sky/navy background, warm paper-like cards, and one strong accent color. The result should feel like a real tiny product, not a raw demo dump.
 
-Before finishing, inspect the files you created and run `node --check app.js` as a local validation command. It does not require network access. Then call `finish` with an honest summary.
+Move through the workflow explicitly: inspect the project, record a short plan with `workflow_checkpoint`, implement the page, verify it with `node --check app.js`, review the complete change with `git_diff`, and then call `finish` with an honest summary. The validation command does not require network access.

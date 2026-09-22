@@ -80,6 +80,15 @@ Run the first benchmark from the workspace root:
 .\scripts\run-agent-lab.ps1 -RunId run-001
 ```
 
+The web console's Starting point selector now includes four built-in runs:
+
+- `Static page smoke test` — the full Northstar Field Notes UI benchmark and its external evaluator.
+- `File round-trip smoke test` — a fast inspect/write/read/validate/diff tool-chain check.
+- `Structured validation smoke test` — a small JSON artifact plus a dependency-free local validator.
+- `Mini project smoke test` — a smaller three-file browser build for quick iteration.
+
+The selector shows each preset's purpose before launch. Its completion gates come from `agent-lab/tasks/catalog.json`, so a small smoke test does not inherit the static-page benchmark's required files or evaluator. Direct CLI `-TaskFile` runs retain the configured default gates unless `-NoGates` is supplied.
+
 The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `output.log`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config.
 
 To swap Gemma 4 sizes, stop the running llama.cpp process and start the matching file:

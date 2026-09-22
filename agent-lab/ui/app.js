@@ -1749,7 +1749,16 @@ async function loadTasks() {
   if (state.tasks.length) {
     select.value = state.tasks[0].name;
     $("taskText").value = state.tasks[0].content;
+    renderTaskPresetDescription(state.tasks[0]);
+  } else {
+    renderTaskPresetDescription(null);
   }
+}
+
+function renderTaskPresetDescription(task) {
+  const description = $("taskPresetDescription");
+  if (!description) return;
+  description.textContent = task?.description || (task ? "Built-in task preset." : "Custom tasks run with no preset-specific completion gates.");
 }
 
 async function loadReasoningLevels() {
@@ -1849,9 +1858,11 @@ $("taskPreset").addEventListener("change", () => {
   if (task) {
     $("taskText").value = task.content;
     $("useGates").checked = true;
+    renderTaskPresetDescription(task);
   } else {
     $("taskText").value = "";
     $("useGates").checked = false;
+    renderTaskPresetDescription(null);
   }
 });
 $("newChatButton").addEventListener("click", () => createSession({ announce: true }));

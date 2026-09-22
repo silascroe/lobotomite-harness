@@ -328,13 +328,27 @@ def task_catalog() -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
     if not TASKS_DIR.is_dir():
         return tasks
+    metadata = read_json(TASKS_DIR / "catalog.json") or {}
+    catalog_entries = metadata.get("tasks") if isinstance(metadata.get("tasks"), dict) else {}
     for path in sorted(TASKS_DIR.glob("*.md")):
         try:
             content = path.read_text(encoding="utf-8")
         except OSError:
             continue
         title = next((line.lstrip("# ").strip() for line in content.splitlines() if line.startswith("#")), path.stem)
-        tasks.append({"name": path.name, "title": title, "content": content})
+        entry = catalog_entries.get(path.name) if isinstance(catalog_entries, dict) else {}
+        entry = entry if isinstance(entry, dict) else {}
+        profile = entry.get("profile") if isinstance(entry.get("profile"), dict) else {}
+        gates = entry.get("gates") if isinstance(entry.get("gates"), dict) else {}
+        tasks.append(
+            {
+                "name": path.name,
+                "title": title,
+                "content": content,
+                "description": str(entry.get("description") or ""),
+                "profile": {**profile, "name": path.name, "title": title, "gates": gates},
+            }
+        )
     return tasks
 
 
