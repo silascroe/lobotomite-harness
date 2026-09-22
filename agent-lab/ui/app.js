@@ -521,9 +521,70 @@ function renderActivity(events) {
   container.scrollTop = container.scrollHeight;
 }
 
+function compactText(value, limit = 220) {
+  const copy = String(value ?? "").replace(/\s+/g, " ").trim();
+  return copy.length > limit ? `${copy.slice(0, limit - 1)}…` : copy;
+}
+
 function compactActivityCopy(event) {
-  const copy = eventCopy(event).replace(/\s+/g, " ").trim();
-  return copy.length > 180 ? `${copy.slice(0, 177)}…` : copy;
+  return compactText(eventCopy(event), 180);
+}
+
+function humanizeAction(action) {
+  const value = String(action || "tool").replace(/[_-]+/g, " ").trim();
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "Tool";
+}
+
+function toolActionTitle(action) {
+  const titles = {
+    list_files: "Inspecting the project folder",
+    read_file: "Reading a project file",
+    write_file: "Writing a project file",
+    replace_text: "Updating a project file",
+    apply_patch: "Applying a project patch",
+    delete_file: "Removing a project file",
+    run_command: "Running a local command",
+    git_diff: "Reviewing project changes",
+    workflow_checkpoint: "Recording workflow progress",
+    find_skills: "Searching the local skill shelf",
+    finish: "Finishing the run",
+  };
+  return titles[action] || `Using ${humanizeAction(action).toLowerCase()}`;
+}
+
+function toolActionMeta(event) {
+  const data = event.data || {};
+  const action = data.action || data.receipt?.action || "";
+  const args = data.args || data.receipt?.summary || {};
+  if (action === "run_command") return "local command";
+  if (args.path && args.path !== ".") return String(args.path);
+  if (action) return action;
+  return "tool";
+}
+
+function toolResultCopy(event) {
+  const data = event.data || {};
+  const action = data.action || "tool";
+  const args = data.args || {};
+  const result = data.result || {};
+  if (result.ok === false || result.error) return compactText(result.error || "The tool reported an error.");
+  if (action === "list_files") {
+    const count = Array.isArray(result.entries) ? result.entries.length : 0;
+    return `Found ${count} ${count === 1 ? "entry" : "entries"} in the project folder.`;
+  }
+  if (action === "read_file") return `Read ${args.path || result.path || "the requested file"}.`;
+  if (action === "write_file") return `Created ${result.path || args.path || "a project file"}.`;
+  if (action === "replace_text") return `Updated ${result.path || args.path || "a project file"}.`;
+  if (action === "apply_patch") {
+    const changed = Array.isArray(result.changed) ? result.changed : [];
+    return changed.length ? `Updated ${changed.join(", ")}.` : "Updated the project files.";
+  }
+  if (action === "delete_file") return `Removed ${result.path || args.path || "a project file"}; a backup was kept.`;
+  if (action === "run_command") {
+    const exitCode = result.exit_code ?? 0;
+    return exitCode === 0 ? "Command completed successfully." : `Command exited with code ${exitCode}.`;
+  }
+  return `Completed ${toolActionTitle(action).toLowerCase()}.`;
 }
 
 function activityKindLabel(event) {
@@ -546,6 +607,187 @@ function activityKindLabel(event) {
     finish: "Run",
   };
   return labels[event.event] || "Checkpoint";
+}
+
+function phaseLabel(phase) {
+  return WORKFLOW_PHASES.find((item) => item.id === phase)?.label || humanizeAction(phase || "workflow");
+}
+
+function deriveActivityFeed(events) {
+  const items = [];
+  const add = (item) => {
+    const normalized = {
+      kind: "narrative",
+      tone: "neutral",
+      status: "complete",
+      icon: "·",
+      label: "Agent",
+      title: "Activity recorded",
+      copy: "",
+      meta: "",
+      timestamp: "",
+      ...item,
+    };
+    items.push(normalized);
+    return normalized;
+  };
+  const findTool = (action) => {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item.kind === "tool" && item.action === action && ["working", "checking"].includes(item.status)) return item;
+    }
+    return null;
+  };
+
+  for (const event of events) {
+    if (!event || !event.event) continue;
+    const data = event.data || {};
+    switch (event.event) {
+      case "workspace_lock_acquired":
+      case "workspace_lock_released":
+      case "model_response":
+      case "tool_call_settled":
+        break;
+      case "run_created":
+        add({
+          label: "Run started",
+          title: data.mode === "selected" ? "Attached to the selected project" : "Opened a fresh project workspace",
+          copy: "The agent has a clean place to work.",
+          icon: "◇",
+          timestamp: event.timestamp,
+        });
+        break;
+      case "session_ready":
+        add({ label: "Session ready", title: "The conversation is ready", copy: "The selected project context is attached.", icon: "◇", timestamp: event.timestamp });
+        break;
+      case "session_rehydrated":
+        add({ label: "Recovered", title: "Restored the conversation from disk", copy: "The previous project context is available again.", icon: "↻", tone: "success", timestamp: event.timestamp });
+        break;
+      case "workflow_phase": {
+        const workflow = data.state || data.workflow || {};
+        const phase = String(workflow.phase || "intake");
+        add({
+          label: phaseLabel(phase),
+          title: compactText(workflow.summary || `Moving through ${phaseLabel(phase).toLowerCase()}.`, 150),
+          copy: workflow.next_action ? `Next: ${compactText(workflow.next_action, 180)}` : "",
+          icon: phase === "complete" ? "✓" : "·",
+          tone: workflow.status === "blocked" ? "error" : phase === "complete" ? "success" : "neutral",
+          timestamp: event.timestamp,
+        });
+        break;
+      }
+      case "workflow_late_evidence":
+        add({ label: "Workflow", title: "Recorded a late checkpoint", copy: compactActivityCopy(event), icon: "↺", tone: "tool", timestamp: event.timestamp });
+        break;
+      case "tool_call_started": {
+        const action = data.receipt?.action || "tool";
+        add({
+          kind: "tool",
+          label: "Tool call",
+          title: toolActionTitle(action),
+          copy: "Waiting for the tool result.",
+          meta: toolActionMeta(event),
+          action,
+          status: "working",
+          icon: "↗",
+          tone: "active",
+          timestamp: event.timestamp,
+        });
+        break;
+      }
+      case "tool_call_completed": {
+        const action = data.receipt?.action || "tool";
+        const item = findTool(action);
+        if (item) {
+          item.status = "checking";
+          item.copy = "Tool returned; recording the result.";
+          item.timestamp = event.timestamp || item.timestamp;
+        }
+        break;
+      }
+      case "tool_result": {
+        const action = data.action || "tool";
+        const item = findTool(action) || add({ kind: "tool", label: "Tool result", title: toolActionTitle(action), action, icon: "↗", timestamp: event.timestamp });
+        const failed = data.result?.ok === false || Boolean(data.result?.error);
+        item.label = failed ? "Tool result" : "Tool result";
+        item.title = toolActionTitle(action);
+        item.copy = toolResultCopy(event);
+        item.meta = toolActionMeta(event);
+        item.status = failed ? "error" : "complete";
+        item.tone = failed ? "error" : "success";
+        item.timestamp = event.timestamp || item.timestamp;
+        break;
+      }
+      case "tool_result_replayed":
+        add({ label: "Recovery", title: "Reused a recorded tool result", copy: compactActivityCopy(event), icon: "↻", tone: "tool", timestamp: event.timestamp });
+        break;
+      case "tool_outcome_unknown":
+        add({ label: "Recovery", title: "Paused before repeating a tool action", copy: compactActivityCopy(event), icon: "!", tone: "error", timestamp: event.timestamp });
+        break;
+      case "assistant_message": {
+        const content = compactText(data.content, 420);
+        if (content) add({ label: "Agent update", title: "The agent added an update", copy: content, icon: "A", tone: "success", timestamp: event.timestamp });
+        break;
+      }
+      case "approval_requested":
+        add({ label: "Approval", title: "The agent is waiting for your approval", copy: "The next project change is paused until you decide.", icon: "?", tone: "waiting", status: "working", timestamp: event.timestamp });
+        break;
+      case "invalid_model_action":
+        add({ label: "Model repair", title: "The model output needed repair", copy: compactText(data.error || "The action was not understood.", 220), icon: "↺", tone: "tool", timestamp: event.timestamp });
+        break;
+      case "recovery_retry":
+        add({ label: "Recovery", title: "Trying the last move again", copy: compactActivityCopy(event), icon: "↺", tone: "tool", timestamp: event.timestamp });
+        break;
+      case "recovery_duplicate_action":
+        add({ label: "Recovery", title: "Stopped a duplicate action", copy: compactActivityCopy(event), icon: "!", tone: "waiting", timestamp: event.timestamp });
+        break;
+      case "recovery_exhausted":
+        add({ label: "Recovery", title: "Recovery attempts are exhausted", copy: compactActivityCopy(event), icon: "!", tone: "error", timestamp: event.timestamp });
+        break;
+      case "context_compacted":
+        add({ label: "Context", title: "Condensed older context", copy: compactActivityCopy(event), icon: "≈", tone: "tool", timestamp: event.timestamp });
+        break;
+      case "evaluator": {
+        const passed = Boolean(data.result?.passed);
+        add({ label: "Verification", title: passed ? "The evaluator passed" : "The evaluator found a problem", copy: data.result?.summary || "External evaluation completed.", icon: passed ? "✓" : "!", tone: passed ? "success" : "error", timestamp: event.timestamp });
+        break;
+      }
+      case "finish":
+        add({ label: "Finished", title: data.status === "success" ? "The run finished successfully" : "The run stopped", copy: data.summary || "The run reached a terminal state.", icon: data.status === "success" ? "✓" : "!", tone: data.status === "success" ? "success" : "error", timestamp: event.timestamp });
+        break;
+      case "harness_error":
+        add({ label: "Needs attention", title: "The run hit an error", copy: compactText(data.error || "The harness reported an unknown error.", 420), icon: "!", tone: "error", timestamp: event.timestamp });
+        break;
+      case "interactive_step_limit":
+      case "turn_limit":
+        add({ label: "Paused", title: event.event === "turn_limit" ? "The run reached its turn limit" : "The run reached its action limit", copy: compactActivityCopy(event), icon: "Ⅱ", tone: "waiting", timestamp: event.timestamp });
+        break;
+      default:
+        break;
+    }
+  }
+  return items.slice(-60);
+}
+
+function activityStatusLabel(status) {
+  return { working: "Working", checking: "Checking", complete: "Done", error: "Needs attention" }[status] || "Recorded";
+}
+
+function renderActivityFeedItem(item, current) {
+  const currentClass = current ? " current" : "";
+  const status = item.kind === "tool" || item.status === "working" || item.status === "checking" || item.status === "error"
+    ? `<span class="run-activity-item-status">${escapeText(activityStatusLabel(item.status))}</span>`
+    : "";
+  const meta = item.meta ? `<code>${escapeText(item.meta)}</code>` : "";
+  const copy = item.copy ? `<p>${escapeText(item.copy)}</p>` : "";
+  return `<article class="run-activity-item ${escapeText(item.kind)} ${escapeText(item.tone)}${currentClass}">
+    <div class="run-activity-item-icon" aria-hidden="true">${escapeText(item.icon)}</div>
+    <div class="run-activity-item-body">
+      <div class="run-activity-item-head"><span>${escapeText(item.label)}</span>${meta}<time>${escapeText(formatTime(item.timestamp))}</time></div>
+      <div class="run-activity-item-title"><strong>${escapeText(item.title)}</strong>${status}</div>
+      ${copy}
+    </div>
+  </article>`;
 }
 
 function runActivityStatus(status) {
@@ -581,58 +823,73 @@ function runActivityHeading(status) {
   return "Run activity";
 }
 
-function runActivityCurrentCopy(run, latestEvent) {
-  const status = run.status || "idle";
-  if (status === "running") return latestEvent ? compactActivityCopy(latestEvent) : "Starting the run…";
-  if (status === "waiting_approval") return "Waiting for your approval before the next change.";
-  if (["error", "failed"].includes(status)) {
-    return latestEvent?.event === "harness_error"
-      ? compactActivityCopy(latestEvent)
-      : readableSummary(run.summary?.summary) || "The run stopped before it could finish.";
+function currentActivityItem(feed) {
+  for (let index = feed.length - 1; index >= 0; index -= 1) {
+    if (["working", "checking"].includes(feed[index].status)) return feed[index];
   }
-  if (["success", "complete"].includes(status)) return latestEvent ? compactActivityCopy(latestEvent) : "The run finished.";
-  if (status === "interrupted") return "The run stopped partway through. Retry or resume when ready.";
-  if (status === "blocked") return "The workflow is blocked. Open Details to see what needs attention.";
-  return latestEvent ? compactActivityCopy(latestEvent) : "Waiting to start.";
+  return feed[feed.length - 1] || null;
+}
+
+function runActivityNow(run, item) {
+  const status = run.status || "idle";
+  if (item) return { title: item.title, copy: item.copy || "The latest checkpoint is recorded below." };
+  if (status === "waiting_approval") return { title: "Approval needed", copy: "Waiting for your approval before the next change." };
+  if (["error", "failed"].includes(status)) return { title: "The run stopped", copy: readableSummary(run.summary?.summary) || "The run stopped before it could finish." };
+  if (status === "interrupted") return { title: "The run is paused", copy: "Retry or resume when ready." };
+  if (status === "blocked") return { title: "The workflow is blocked", copy: "Open Details to see what needs attention." };
+  return { title: "Starting the run…", copy: "Waiting for the first checkpoint." };
+}
+
+function activityNearBottom(element) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < 64;
+}
+
+function updateActivityJumpButton() {
+  const timeline = $("runActivityTimeline");
+  const button = $("runActivityJump");
+  if (!timeline || !button) return;
+  button.hidden = timeline.scrollHeight <= timeline.clientHeight || activityNearBottom(timeline);
 }
 
 function renderRunActivity(run) {
   const panel = $("runActivityPanel");
   const timeline = $("runActivityTimeline");
-  if (!panel || !timeline) return;
+  const feedContainer = $("runActivityFeed");
+  if (!panel || !timeline || !feedContainer) return;
 
   const events = Array.isArray(run.events) ? run.events.filter((event) => event && event.event) : [];
-  const visibleEvents = events.slice(-80);
-  const latestEvent = events[events.length - 1];
+  const feed = deriveActivityFeed(events);
+  const currentItem = currentActivityItem(feed);
   const status = run.status || "idle";
   const stateElement = $("runActivityState");
   const headingElement = $("runActivityHeading");
   const countElement = $("runActivityCount");
-  const nowElement = $("runActivityNow");
+  const titleElement = $("runActivityNowTitle");
+  const copyElement = $("runActivityNowCopy");
+  const wasNewRun = timeline.dataset.runId !== run.run_id;
+  const stickToBottom = wasNewRun || timeline.dataset.initialized !== "true" || activityNearBottom(timeline);
+  const now = runActivityNow(run, currentItem);
 
   headingElement.textContent = runActivityHeading(status);
   stateElement.className = `run-activity-state ${runActivityTone(status)}`;
   stateElement.textContent = runActivityStatus(status);
-  countElement.textContent = `${events.length} recorded step${events.length === 1 ? "" : "s"}`;
-  nowElement.innerHTML = `<span class="run-activity-now-label">Now</span><span class="run-activity-now-copy">${escapeText(runActivityCurrentCopy(run, latestEvent))}</span>`;
+  countElement.textContent = `${feed.length} activity item${feed.length === 1 ? "" : "s"}`;
+  titleElement.textContent = now.title;
+  copyElement.textContent = now.copy;
 
-  if (!visibleEvents.length) {
+  if (!feed.length) {
     timeline.className = "run-activity-timeline empty-panel";
-    timeline.innerHTML = '<div class="run-activity-empty">The run is starting. The first checkpoint will appear here.</div>';
+    feedContainer.className = "run-activity-feed empty-panel";
+    feedContainer.innerHTML = '<div class="run-activity-empty">The run is starting. The first checkpoint will appear here.</div>';
   } else {
     timeline.className = "run-activity-timeline";
-    timeline.innerHTML = visibleEvents.map((event, index) => {
-      const isCurrent = event === latestEvent && status === "running";
-      return `<article class="run-activity-entry ${eventClass(event)}${isCurrent ? " current" : ""}" data-event-kind="${escapeText(event.event)}">
-        <span class="run-activity-marker" aria-hidden="true"></span>
-        <div class="run-activity-body">
-          <div class="run-activity-line"><span class="run-activity-kind">${escapeText(activityKindLabel(event))}</span><time>${escapeText(formatTime(event.timestamp))}</time></div>
-          <p class="run-activity-copy">${escapeText(compactActivityCopy(event))}</p>
-        </div>
-      </article>`;
-    }).join("");
-    timeline.scrollTop = timeline.scrollHeight;
+    feedContainer.className = "run-activity-feed";
+    feedContainer.innerHTML = feed.map((item) => renderActivityFeedItem(item, item === currentItem && status === "running")).join("");
   }
+  timeline.dataset.initialized = "true";
+  timeline.dataset.runId = run.run_id || "";
+  if (stickToBottom) timeline.scrollTop = timeline.scrollHeight;
+  updateActivityJumpButton();
   panel.hidden = false;
 }
 
@@ -1603,6 +1860,12 @@ $("emptyNewRunButton").addEventListener("click", () => openModal("runDialog", "e
 $("workspaceDialogTrigger").addEventListener("click", () => openModal("workspaceDialog", "workspaceDialogTrigger"));
 $("runButton").addEventListener("click", startRun);
 $("sendButton").addEventListener("click", sendMessage);
+$("runActivityTimeline").addEventListener("scroll", updateActivityJumpButton);
+$("runActivityJump").addEventListener("click", () => {
+  const timeline = $("runActivityTimeline");
+  timeline.scrollTop = timeline.scrollHeight;
+  updateActivityJumpButton();
+});
 $("stopJobButton").addEventListener("click", stopJob);
 $("retryJobButton").addEventListener("click", retryJob);
 $("reasoningLevel").addEventListener("change", changeReasoningLevel);

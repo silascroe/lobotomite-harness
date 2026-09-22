@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Agent Lab</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260920-studio-8">
-  <link rel="stylesheet" href="styles.css?v=20260921-provider-1">
+  <link rel="stylesheet" href="styles.css?v=20260922-activity-feed-1">
 </head>
 <body>
   <div class="app-shell">
@@ -196,7 +196,7 @@
                 <div>
                   <p class="run-activity-kicker">Live trace</p>
                   <h2 id="runActivityHeading">The agent is working</h2>
-                  <p id="runActivityDescription">Plain-language checkpoints from the model, tools, and workflow.</p>
+                  <p id="runActivityDescription">Summaries derived from recorded model, tool, and workflow events.</p>
                 </div>
                 <div class="run-activity-meta">
                   <span id="runActivityState" class="run-activity-state running" role="status" aria-live="polite">Running</span>
@@ -205,9 +205,18 @@
               </header>
               <div id="runActivityNow" class="run-activity-now" role="status" aria-live="polite">
                 <span class="run-activity-now-label">Now</span>
-                <span class="run-activity-now-copy">Starting the run…</span>
+                <div class="run-activity-now-content">
+                  <strong id="runActivityNowTitle">Starting the run…</strong>
+                  <span id="runActivityNowCopy">Waiting for the first checkpoint.</span>
+                </div>
               </div>
-              <div id="runActivityTimeline" class="run-activity-timeline" aria-live="polite"></div>
+              <div id="runActivityTimeline" class="run-activity-timeline" aria-live="polite">
+                <div id="runActivityFeed" class="run-activity-feed"></div>
+              </div>
+              <footer class="run-activity-footer">
+                <span id="runActivityFeedHint">The newest step stays in view while you watch.</span>
+                <button id="runActivityJump" class="text-button" type="button" hidden>Jump to latest</button>
+              </footer>
             </section>
             <div class="run-hero">
               <div class="run-hero-mark" aria-hidden="true">AL</div>
@@ -471,6 +480,6 @@
     </form>
   </dialog>
 
-  <script src="app.js?v=20260921-provider-1"></script>
+  <script src="app.js?v=20260922-activity-feed-1"></script>
 </body>
 </html>

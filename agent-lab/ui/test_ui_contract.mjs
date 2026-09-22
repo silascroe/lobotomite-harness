@@ -183,6 +183,19 @@ test("run lifecycle checkpoints use human-readable vocabulary", () => {
   assert.match(app, /case "invalid_model_action"/);
 });
 
+test("run activity presents a narrative feed over the event ledger", () => {
+  for (const id of ["runActivityFeed", "runActivityNowTitle", "runActivityNowCopy", "runActivityJump"]) {
+    assert.match(html, new RegExp(`id="${id}"`), `missing #${id}`);
+  }
+  assert.match(html, /Summaries derived from recorded model, tool, and workflow events\./);
+  assert.match(app, /function deriveActivityFeed\(/);
+  assert.match(app, /deriveActivityFeed\(events\)/);
+  assert.match(app, /runActivityJump/);
+  assert.match(css, /\.run-activity-feed/);
+  assert.match(css, /\.run-activity-item/);
+  assert.match(css, /\.run-activity-tool/);
+});
+
 test("project identity and run launch copy do not inherit stale record state", () => {
   assert.match(app, /topbar\.textContent = project\?\.name/);
   assert.match(app, /dialogId === ["']runDialog["'][\s\S]*launchNote/);
