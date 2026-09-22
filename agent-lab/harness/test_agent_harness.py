@@ -45,6 +45,35 @@ class HarnessUnitTests(unittest.TestCase):
         with self.assertRaises(MODULE.HarnessError):
             self.harness.resolve_path("../outside")
 
+    def test_task_profile_replaces_global_static_page_gates(self) -> None:
+        config = {
+            "required_files": ["index.html", "styles.css", "app.js"],
+            "require_validation": True,
+            "require_workflow_gates": True,
+            "evaluator": "agent-lab/checks/check_static_page.py",
+        }
+
+        result = MODULE.apply_task_profile(
+            config,
+            {
+                "name": "002-file-roundtrip.md",
+                "title": "File round-trip smoke test",
+                "description": "Fast tool-chain smoke test.",
+                "gates": {
+                    "required_files": ["agent-check.md", "agent-check.mjs"],
+                    "require_validation": True,
+                    "require_workflow_gates": True,
+                },
+            },
+        )
+
+        self.assertEqual(result["required_files"], ["agent-check.md", "agent-check.mjs"])
+        self.assertTrue(result["require_validation"])
+        self.assertTrue(result["require_workflow_gates"])
+        self.assertNotIn("evaluator", result)
+        self.assertEqual(result["task_profile"]["name"], "002-file-roundtrip.md")
+        self.assertEqual(config["required_files"], ["index.html", "styles.css", "app.js"])
+
     def test_json_recovery_preserves_literal_backslashes_and_balances_outer_object(self) -> None:
         malformed = r'{"action":"write_file","args":{"path":"styles.css","content":"\input { color: red; }"}'
 

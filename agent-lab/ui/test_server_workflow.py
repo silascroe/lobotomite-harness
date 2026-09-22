@@ -119,6 +119,38 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(environment["AGENT_LAB_API_KEY"], "secret-run-key")
         self.assertEqual(result["provider"]["model"], "beefy-model")
 
+    def test_preset_run_passes_its_profile_and_unknown_presets_are_rejected(self) -> None:
+        class DummyProcess:
+            stdout = None
+            returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self):
+                return self.returncode
+
+        with self.assertRaises(MODULE.ApiError) as raised:
+            MODULE.start_run({"task_text": "try it", "task_name": "missing.md"})
+        self.assertEqual(raised.exception.status, 400)
+
+        with patch.object(MODULE.subprocess, "Popen", return_value=DummyProcess()) as popen:
+            result = MODULE.start_run(
+                {
+                    "task_text": "run the round-trip smoke test",
+                    "task_name": "002-file-roundtrip.md",
+                    "gated": True,
+                }
+            )
+
+        command = popen.call_args.args[0]
+        profile_index = command.index("--task-profile-json") + 1
+        profile = json.loads(command[profile_index])
+        self.assertEqual(profile["name"], "002-file-roundtrip.md")
+        self.assertEqual(profile["gates"]["required_files"], ["agent-check.md", "agent-check.mjs"])
+        self.assertNotIn("evaluator", profile["gates"])
+        self.assertEqual(result["task_profile"]["title"], "File round-trip smoke test")
+
     def test_interactive_session_rejects_a_second_owner_of_the_same_project(self) -> None:
         project = Path(self.temp_dir.name) / "shared-project"
         project.mkdir()

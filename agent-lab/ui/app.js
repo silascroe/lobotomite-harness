@@ -917,8 +917,8 @@ function renderRunList(runs) {
   }
   container.innerHTML = runs.map((run) => `
     <button class="run-item ${run.run_id === state.activeRun && state.activeKind === "run" ? "active" : ""}" data-run="${escapeText(run.run_id)}" type="button">
-      <div class="run-item-name">${escapeText(run.run_id)}</div>
-      <div class="run-item-meta"><span class="run-item-status ${escapeText(run.status)}">${escapeText(run.status)}</span><span>${escapeText(run.changed_files?.length || 0)} files</span></div>
+      <div class="run-item-name">${escapeText(run.task_profile?.title || "Custom task")}</div>
+      <div class="run-item-meta"><span class="run-item-status ${escapeText(run.status)}">${escapeText(run.status)}</span><span>${escapeText(run.run_id)}</span><span>${escapeText(run.changed_files?.length || 0)} files</span></div>
     </button>`).join("");
   container.querySelectorAll(".run-item").forEach((button) => button.addEventListener("click", () => selectRun(button.dataset.run)));
 }
@@ -1107,6 +1107,8 @@ function renderInspector(record = state.activeRecord) {
   const workspaceLock = record?.workspace_lock || {};
   const toolReceipt = record?.tool_receipt || {};
   const provider = providerForRecord(record);
+  const taskProfile = record?.task_profile || record?.summary?.task_profile || {};
+  const taskLabel = taskProfile.title || taskProfile.name || (state.activeKind === "run" ? "Custom task" : "Interactive chat");
   const receiptLabel = toolReceipt.status === "completed"
     ? "Completed; awaiting transcript settlement"
     : toolReceipt.status === "unknown"
@@ -1123,6 +1125,7 @@ function renderInspector(record = state.activeRecord) {
     detailRow(state.activeKind === "run" ? "Run ID" : "Session ID", escapeText(id), "mono-value"),
     detailRow("Status", `<span class="status-inline"><span class="status-dot" aria-hidden="true"></span>${escapeText(statusLabel(status))}</span>`),
     detailRow("Model", escapeText(model)),
+    detailRow("Task", escapeText(taskLabel), "muted-value"),
     detailRow("Provider", escapeText(provider.provider === "local" ? "Local model" : `${provider.label} · ${provider.model || "model not set"}`)),
     detailRow("Reasoning", escapeText(reasoningLabel)),
     detailRow("Tool approvals", escapeText(normalizeApprovalMode(record?.approval_mode || state.approvalMode) === "confirm" ? "Ask before edits" : "Autonomous")),
@@ -1148,9 +1151,11 @@ function renderInspector(record = state.activeRecord) {
 
 function renderRunSurface(run) {
   const summary = run.summary || {};
+  const taskProfile = run.task_profile || summary.task_profile || {};
   $("runEmptyState").hidden = true;
   $("runOverview").hidden = false;
   $("runTitle").textContent = run.run_id;
+  $("runPresetLabel").textContent = taskProfile.title || taskProfile.name || "Custom task";
   $("runSummary").textContent = readableSummary(summary.summary) || `Status: ${statusLabel(run.status)}`;
   $("runProjectLabel").textContent = projectForPath(run.project)?.name
     || (run.workspace_mode === "selected" ? "Existing folder" : "Scratch workspace");
@@ -1653,6 +1658,7 @@ async function startRun() {
     return;
   }
   const gated = $("taskPreset").value !== "custom" && $("useGates").checked;
+  const taskName = $("taskPreset").value !== "custom" ? $("taskPreset").value : null;
   const projectPath = $("workspacePath").value.trim();
   const target = projectPath ? `the selected project ${shortenPath(projectPath)}` : "an isolated workspace";
   $("runButton").disabled = true;
@@ -1662,7 +1668,7 @@ async function startRun() {
     const result = await api("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_text: taskText, gated, reasoning_level: state.reasoningLevel, approval_mode: state.approvalMode, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
+      body: JSON.stringify({ task_text: taskText, task_name: taskName, gated, reasoning_level: state.reasoningLevel, approval_mode: state.approvalMode, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
     });
     state.activeKind = "run";
     state.activeRun = result.run_id;

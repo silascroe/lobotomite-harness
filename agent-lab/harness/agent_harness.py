@@ -222,6 +222,45 @@ class HarnessError(Exception):
     """An expected, reportable harness or tool error."""
 
 
+def apply_task_profile(config: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    """Apply a catalog profile without inheriting unrelated global gates."""
+    if not isinstance(profile, dict):
+        raise HarnessError("task profile must be a JSON object")
+    gates = profile.get("gates")
+    if not isinstance(gates, dict):
+        raise HarnessError("task profile gates must be a JSON object")
+    required_files = gates.get("required_files", [])
+    if not isinstance(required_files, list) or not all(isinstance(item, str) and item.strip() for item in required_files):
+        raise HarnessError("task profile required_files must be a list of non-empty strings")
+    for key in ("require_validation", "require_workflow_gates"):
+        if key in gates and not isinstance(gates[key], bool):
+            raise HarnessError(f"task profile {key} must be boolean")
+    evaluator = gates.get("evaluator")
+    if evaluator is not None and (not isinstance(evaluator, str) or not evaluator.strip()):
+        raise HarnessError("task profile evaluator must be a non-empty string when provided")
+
+    result = dict(config)
+    result["required_files"] = list(required_files)
+    result["require_validation"] = bool(gates.get("require_validation", False))
+    result["require_workflow_gates"] = bool(gates.get("require_workflow_gates", False))
+    if evaluator:
+        result["evaluator"] = evaluator
+    else:
+        result.pop("evaluator", None)
+    result["task_profile"] = {
+        "name": str(profile.get("name") or ""),
+        "title": str(profile.get("title") or ""),
+        "description": str(profile.get("description") or ""),
+        "gates": {
+            "required_files": list(required_files),
+            "require_validation": result["require_validation"],
+            "require_workflow_gates": result["require_workflow_gates"],
+            **({"evaluator": evaluator} if evaluator else {}),
+        },
+    }
+    return result
+
+
 def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1780,6 +1819,7 @@ class AgentHarness:
                 "tool_receipt": self.tool_receipt_view(),
                 "workspace_lock": self.workspace_lock_view(),
                 "provider": self.provider_metadata(),
+                "task_profile": self.config.get("task_profile", {}),
                 "recovery": self.recovery.snapshot(),
                 "blocked_reason": self.blocked_reason,
                 "workflow": self.workflow,
@@ -1857,6 +1897,7 @@ class AgentHarness:
             "tool_receipt": self.tool_receipt_view(),
             "workspace_lock": self.workspace_lock_view(),
             "provider": self.provider_metadata(),
+            "task_profile": self.config.get("task_profile", {}),
             "skills": self.skill_metadata(),
             "recovery": self.recovery.snapshot(),
             "blocked_reason": self.blocked_reason,
@@ -2168,6 +2209,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reasoning-level", choices=tuple(REASONING_LEVELS), help="override the configured reasoning level")
     parser.add_argument("--approval-mode", choices=("auto", "confirm"), help="whether mutating tools need operator approval")
     parser.add_argument("--skill-overrides-json", help="JSON object containing per-task enabled and disabled skill names")
+    parser.add_argument("--task-profile-json", help="JSON catalog profile containing task identity and completion gates")
     parser.add_argument("--no-gates", action="store_true", help="disable task-specific completion requirements and evaluator")
     return parser.parse_args()
 
@@ -2222,6 +2264,12 @@ def main() -> int:
             raise SystemExit(f"invalid skill overrides JSON: {exc}") from exc
         config = dict(config)
         config["skill_overrides"] = skill_overrides
+    if args.task_profile_json is not None:
+        try:
+            task_profile = json.loads(args.task_profile_json)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"invalid task profile JSON: {exc}") from exc
+        config = apply_task_profile(config, task_profile)
     if args.no_gates:
         config = dict(config)
         config["required_files"] = []

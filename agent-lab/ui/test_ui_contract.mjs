@@ -45,6 +45,14 @@ test("run preset selection exposes its purpose before launch", () => {
   assert.match(app, /renderTaskPresetDescription\(/);
 });
 
+test("runs preserve the selected task identity for comparison", () => {
+  assert.match(html, /id="runPresetLabel"/);
+  assert.match(app, /task_name:/);
+  assert.match(app, /task_profile/);
+  assert.match(app, /detailRow\("Task"/);
+  assert.match(app, /runPresetLabel/);
+});
+
 test("shell exposes separate Chats and Runs modes", () => {
   assert.match(html, /id="chatsModeButton"[^>]*aria-controls="chatNavigation chatSurface"/);
   assert.match(html, /id="runsModeButton"[^>]*aria-controls="runNavigation runSurface"/);

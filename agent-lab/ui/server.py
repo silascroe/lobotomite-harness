@@ -430,6 +430,7 @@ def run_state(run_id: str) -> dict[str, Any]:
     except ValueError:
         saved_provider = LOCAL_PROVIDER
     provider = public_provider(saved_config, has_api_key=bool(current_provider_key()) if saved_provider == OPENAI_COMPATIBLE_PROVIDER else False)
+    task_profile = summary.get("task_profile") or progress.get("task_profile") or saved_config.get("task_profile") or {}
     with PROCESS_LOCK:
         process = PROCESSES.get(run_id)
         output = list(OUTPUTS.get(run_id, []))
@@ -463,6 +464,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "approval": approval,
         "tool_receipt": tool_receipt,
         "provider": provider,
+        "task_profile": task_profile,
         "workspace_lock": summary.get("workspace_lock") or progress.get("workspace_lock") or {"status": "unknown"},
         "skills": summary.get("skills", {}),
         "model": summary.get("model", ""),
@@ -496,6 +498,7 @@ def run_summaries() -> list[dict[str, Any]]:
                 "approval": state.get("approval", {}),
                 "tool_receipt": state.get("tool_receipt", {}),
                 "provider": state.get("provider", {}),
+                "task_profile": state.get("task_profile", summary.get("task_profile", {})),
                 "workspace_lock": state.get("workspace_lock", {}),
                 "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
@@ -1301,6 +1304,14 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         raise ApiError("task is too long")
     run_id = choose_run_id(payload.get("run_id"))
     gated = bool(payload.get("gated", False))
+    task_name = payload.get("task_name")
+    task = None
+    if task_name not in (None, ""):
+        if not isinstance(task_name, str):
+            raise ApiError("task_name must be a catalog preset name")
+        task = next((item for item in task_catalog() if item["name"] == task_name), None)
+        if task is None:
+            raise ApiError(f"unknown task preset: {task_name}")
     approval_mode = normalize_mode(payload.get("approval_mode", "auto"))
     reasoning_level = payload.get("reasoning_level")
     if reasoning_level is not None:
@@ -1336,6 +1347,8 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     if not gated:
         command.append("--no-gates")
+    if task is not None:
+        command.extend(["--task-profile-json", json.dumps(task["profile"], ensure_ascii=False)])
     if reasoning_level is not None:
         command.extend(["--reasoning-level", reasoning_level])
     if skill_overrides is not None:
@@ -1376,6 +1389,7 @@ def start_run(payload: dict[str, Any]) -> dict[str, Any]:
         "project": str(project_path),
         "skills": public_selection(skill_selection),
         "approval_mode": approval_mode,
+        "task_profile": task["profile"] if task is not None else {},
         "provider": public_provider(provider_config, has_api_key=bool(api_key)),
     }
 
