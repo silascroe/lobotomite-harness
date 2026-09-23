@@ -1760,21 +1760,28 @@ class AgentHarness:
             message = response_data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise HarnessError(f"model endpoint returned an unexpected response: {clip(raw, 1000)}") from exc
-        content = message.get("content") or ""
-        if isinstance(content, list):
-            content = "".join(
-                str(item.get("text") or "") if isinstance(item, dict) else str(item)
-                for item in content
-            )
+
+        def response_text(value: Any) -> str:
+            if isinstance(value, list):
+                return "".join(
+                    str(item.get("text") or "") if isinstance(item, dict) else str(item)
+                    for item in value
+                )
+            return str(value or "")
+
+        content = response_text(message.get("content"))
+        reasoning_content = response_text(message.get("reasoning_content"))
         result = {
             "content": content,
             "provider": provider,
-            "reasoning_present": bool(message.get("reasoning_content")),
+            "reasoning_present": bool(reasoning_content),
             "finish_reason": response_data.get("choices", [{}])[0].get("finish_reason"),
             "usage": response_data.get("usage", {}),
             "reasoning_level": reasoning["level"],
             "reasoning_budget_tokens": reasoning["budget"],
         }
+        if self.workspace_kind == "run":
+            result["reasoning_content"] = reasoning_content
         self.model_calls += 1
         return result
 

@@ -91,6 +91,14 @@ The selector shows each preset's purpose before launch. Its completion gates com
 
 The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `output.log`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config.
 
+To inspect the model's returned text from PowerShell, use the run ID shown in Agent Lab:
+
+```powershell
+.\scripts\watch-agent-run.ps1 -RunId 'RUN-ID' -Follow
+```
+
+Replace `RUN-ID` with the ID shown in Agent Lab. The watcher prints saved model responses, then follows new ones; stop it with Ctrl+C. Omit `-Follow` to print saved responses and exit. If the endpoint returns a separate `reasoning_content` field, the watcher prints that too. Responses appear after each model call completes because the harness currently uses non-streaming requests. The watcher displays only model-response events and never logs request headers.
+
 To swap Gemma 4 sizes, stop the running llama.cpp process and start the matching file:
 
 ```powershell
@@ -158,7 +166,7 @@ Tool calls also have a durable `tool-receipt.json` lifecycle. The harness record
 
 The control loop also has bounded recovery. The same malformed response, rejected finish, or tool failure gets one targeted repair opportunity; a second identical failure ends a benchmark as `blocked` with the concrete reason instead of burning the rest of the turn budget. Consecutive duplicate tool calls are stopped before the second dispatch. Patch-context failures give the model a specific recovery instruction to reread the current file and switch to exact replacement instead of replaying a stale hunk; missing required fields such as `args.path` get field-specific guidance. Interactive chats receive the same protection but remain usable after showing the recovery message. The policy is persisted in run summaries and chat session metadata under `recovery`, and its decisions are recorded as `recovery_retry`, `recovery_duplicate_action`, and `recovery_exhausted` events. These controls preserve the workflow gates; they do not manufacture missing evidence.
 
-Context windows are bounded independently from transcript durability. The full `transcript.json` remains available for rehydration, while each model request uses the configured `context_max_tokens` budget and keeps the system prompt plus the newest turns. Older observable turns are reduced to an inspectable operational summary; raw hidden reasoning is neither persisted nor reconstructed. A `context_compacted` event and the current context metadata appear in the run summary, session Inspector, and activity feed, so a long task does not silently become a different conversation.
+Context windows are bounded independently from transcript durability. The full `transcript.json` remains available for rehydration, while each model request uses the configured `context_max_tokens` budget and keeps the system prompt plus the newest turns. Older observable turns are reduced to an inspectable operational summary; raw reasoning is never replayed into model context. If a run's provider returns a separate `reasoning_content` field, the run event log preserves it for manual inspection, but the harness does not infer or reconstruct reasoning when that field is absent. A `context_compacted` event and the current context metadata appear in the run summary, session Inspector, and activity feed, so a long task does not silently become a different conversation.
 
 Harness-owned JSON snapshots and project-file edits use same-directory atomic replacement. A stopped process can leave a hidden temporary file, but it cannot turn the active transcript, session record, workflow snapshot, or edited text file into half a JSON document or a truncated file.
 
