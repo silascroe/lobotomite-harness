@@ -148,7 +148,7 @@ class ServerWorkflowTests(unittest.TestCase):
         profile = json.loads(command[profile_index])
         self.assertEqual(profile["name"], "002-file-roundtrip.md")
         self.assertEqual(profile["gates"]["required_files"], ["agent-check.md", "agent-check.mjs"])
-        self.assertNotIn("evaluator", profile["gates"])
+        self.assertEqual(profile["gates"]["evaluator"], "agent-lab/checks/check_file_roundtrip.py")
         self.assertEqual(result["task_profile"]["title"], "File round-trip smoke test")
 
     def test_interactive_session_rejects_a_second_owner_of_the_same_project(self) -> None:

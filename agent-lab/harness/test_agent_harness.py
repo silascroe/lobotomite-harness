@@ -137,7 +137,7 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertIn("context_compacted", (run_dir / "events.jsonl").read_text(encoding="utf-8"))
         self.assertLess(len(request_messages), len(original_messages))
 
-    def test_model_response_metadata_does_not_persist_raw_reasoning_content(self) -> None:
+    def test_run_model_response_keeps_raw_reasoning_for_inspection(self) -> None:
         root = Path(self.temp_dir.name)
         run_dir = root / "reasoning-run"
         project_dir = run_dir / "project"
@@ -178,7 +178,7 @@ class HarnessUnitTests(unittest.TestCase):
         with patch.object(MODULE.urllib.request, "urlopen", return_value=FakeResponse()):
             result = harness.call_model()
 
-        self.assertNotIn("reasoning_content", result)
+        self.assertEqual(result["reasoning_content"], "PRIVATE-REASONING-MUST-NOT-LEAK")
         self.assertTrue(result["reasoning_present"])
 
     def test_remote_provider_uses_ephemeral_auth_without_persisting_the_key(self) -> None:
@@ -427,6 +427,28 @@ class HarnessUnitTests(unittest.TestCase):
         self.assertEqual(harness.missing_workflow_gates(), [])
         self.assertIsNone(harness.finish_issue({"status": "success"}))
 
+    def test_explicit_plan_checkpoint_can_default_only_missing_next_action(self) -> None:
+        root = Path(self.temp_dir.name)
+        harness = MODULE.AgentHarness(
+            task="checkpoint task",
+            config={"require_workflow_gates": True},
+            run_dir=root / "checkpoint-run",
+            project_dir=root / "checkpoint-run" / "project",
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.dispatch("list_files", {"path": "."})
+
+        result = harness.dispatch(
+            "workflow_checkpoint", {"phase": "plan", "summary": "Create and validate both files."}
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(harness.workflow_evidence["plan"])
+        self.assertTrue(harness.workflow["next_action"])
+        with self.assertRaises(MODULE.HarnessError):
+            harness.dispatch("workflow_checkpoint", {"phase": "plan", "next_action": "Write files."})
+
     def test_new_mutation_invalidates_previous_verification_evidence(self) -> None:
         root = Path(self.temp_dir.name)
         run_dir = root / "evidence-run"
@@ -586,6 +608,27 @@ stale context from an older read
         self.assertIn("read_file", instruction)
         self.assertIn("replace_text", instruction)
         self.assertIn("do not repeat", instruction.lower())
+
+    def test_missing_patch_header_recommends_complete_patch_or_file_write(self) -> None:
+        instruction = MODULE.recovery_instruction(
+            "apply_patch", {"ok": False, "error": "patch must start with *** Begin Patch"}
+        )
+        self.assertIn("*** Begin Patch", instruction)
+        self.assertIn("write_file", instruction)
+
+    def test_backward_checkpoint_recovery_names_forward_phase(self) -> None:
+        instruction = MODULE.recovery_instruction(
+            "workflow_checkpoint", {"ok": False, "error": "cannot transition from implement to inspect"}
+        )
+        self.assertIn("implement", instruction)
+        self.assertIn("do not", instruction.lower())
+
+    def test_missing_checkpoint_field_recovery_names_required_args(self) -> None:
+        instruction = MODULE.recovery_instruction(
+            "workflow_checkpoint", {"ok": False, "error": "next_action must be a string"}
+        )
+        self.assertIn("args.next_action", instruction)
+        self.assertIn("args.summary", instruction)
 
     def test_missing_write_path_gives_field_specific_recovery_guidance(self) -> None:
         instruction = MODULE.recovery_instruction(

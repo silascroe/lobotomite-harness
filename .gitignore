@@ -14,6 +14,7 @@ agent-lab/*-bridge-logs/
 agent-lab/cloudflared/
 agent-lab/ui/*.log
 agent-lab/*.log
+agent-lab/benchmarks/results/
 
 # Local model/runtime assets and downloaded binaries
 models/

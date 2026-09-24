@@ -15,7 +15,8 @@
       "gates": {
         "required_files": ["agent-check.md", "agent-check.mjs"],
         "require_validation": true,
-        "require_workflow_gates": true
+        "require_workflow_gates": true,
+        "evaluator": "agent-lab/checks/check_file_roundtrip.py"
       }
     },
     "003-structured-validation.md": {
@@ -23,7 +24,8 @@
       "gates": {
         "required_files": ["health-report.json", "validate-report.mjs"],
         "require_validation": true,
-        "require_workflow_gates": true
+        "require_workflow_gates": true,
+        "evaluator": "agent-lab/checks/check_structured_validation.py"
       }
     },
     "004-mini-project.md": {
@@ -31,7 +33,8 @@
       "gates": {
         "required_files": ["index.html", "styles.css", "app.js"],
         "require_validation": true,
-        "require_workflow_gates": true
+        "require_workflow_gates": true,
+        "evaluator": "agent-lab/checks/check_mini_project.py"
       }
     }
   }

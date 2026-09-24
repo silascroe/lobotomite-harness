@@ -288,6 +288,22 @@ def recovery_instruction(action: str, result: dict[str, Any], *, interactive: bo
             "The patch body was incomplete. Read the target file, then retry with a complete patch ending in "
             f"*** End Patch, or use replace_text/write_file; {suffix}"
         )
+    if action == "apply_patch" and "begin patch" in lowered:
+        return (
+            "The patch was not in the required format. Send the full patch beginning with *** Begin Patch, "
+            f"or use write_file with the complete current file content; {suffix}"
+        )
+    if action == "workflow_checkpoint" and "cannot transition from" in lowered:
+        return (
+            f"The workflow phase already advanced ({detail}). Do not move backward; continue from the current "
+            "phase. If the plan evidence is missing, send a complete workflow_checkpoint with phase plan, "
+            f"args.summary and args.next_action; {suffix}"
+        )
+    if action == "workflow_checkpoint" and any(field in lowered for field in ("next_action", "summary")):
+        return (
+            "The checkpoint needs args.phase, a non-empty args.summary, and a non-empty string "
+            f"args.next_action. Retry the complete action before calling finish; {suffix}"
+        )
     if action in {"write_file", "delete_file", "replace_text", "read_file", "list_files"} and "path" in lowered:
         return (
             f"The {action} call is missing a valid args.path. Retry with args.path set to a non-empty relative "
@@ -1439,7 +1455,7 @@ class AgentHarness:
                 self.workflow,
                 self.workflow["phase"] if late_plan_evidence else args.get("phase"),
                 args.get("summary"),
-                args.get("next_action"),
+                args.get("next_action", "Continue with the next concrete task step." if requested_phase == "plan" else None),
                 artifacts=args.get("artifacts", []),
             )
         except WorkflowError as exc:
@@ -2070,7 +2086,12 @@ class AgentHarness:
                         correction = (
                             issue
                             + f". This is repair attempt {decision.attempt} of {decision.limit}. "
-                            "Continue using the tools, then try finish again."
+                            + (
+                                'Call workflow_checkpoint with args {"phase":"plan","summary":"short plan",'
+                                '"next_action":"next concrete step"} before trying finish again. '
+                                if "workflow evidence missing: plan" in issue else ""
+                            )
+                            + "Continue using the tools, then try finish again."
                         )
                         print(f"  finish rejected: {issue} (repair attempt {decision.attempt}/{decision.limit})")
                         continue

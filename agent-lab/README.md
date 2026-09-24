@@ -87,7 +87,7 @@ The web console's Starting point selector now includes four built-in runs:
 - `Structured validation smoke test` — a small JSON artifact plus a dependency-free local validator.
 - `Mini project smoke test` — a smaller three-file browser build for quick iteration.
 
-The selector shows each preset's purpose before launch. Its completion gates come from `agent-lab/tasks/catalog.json`, so a small smoke test does not inherit the static-page benchmark's required files or evaluator. Direct CLI `-TaskFile` runs retain the configured default gates unless `-NoGates` is supplied.
+The selector shows each preset's purpose before launch. Its completion gates come from `agent-lab/tasks/catalog.json`; all four presets now have independent checkers outside the generated project. The mini-project checker is a structural smoke test, not a visual-quality grade. Direct CLI `-TaskFile` runs retain the configured default gates unless `-NoGates` is supplied. To compare the presets across Gemma reasoning levels sequentially on one local server, run `python agent-lab/benchmarks/catalog_matrix.py`; it writes an incremental JSON report under `agent-lab/benchmarks/results/` after each run. The runner does not automatically resume an interrupted batch.
 
 The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `output.log`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config.
 
