@@ -45,6 +45,67 @@ class HarnessUnitTests(unittest.TestCase):
         with self.assertRaises(MODULE.HarnessError):
             self.harness.resolve_path("../outside")
 
+    def test_action_payload_validation_rejects_missing_wrong_and_unknown_args(self) -> None:
+        with self.assertRaisesRegex(MODULE.HarnessError, "missing required fields: content, path"):
+            MODULE.validate_action_payload({"action": "write_file", "args": {}})
+        with self.assertRaisesRegex(MODULE.HarnessError, "max_depth must be an integer"):
+            MODULE.validate_action_payload({"action": "list_files", "args": {"max_depth": True}})
+        with self.assertRaisesRegex(MODULE.HarnessError, "unknown fields: typo"):
+            MODULE.validate_action_payload({"action": "git_diff", "args": {"typo": 1}})
+
+    def test_action_payload_validation_accepts_complete_and_optional_forms(self) -> None:
+        action, args = MODULE.validate_action_payload({
+            "action": "workflow_checkpoint", "args": {"phase": "plan", "summary": "Create files."}
+        })
+        self.assertEqual(action, "workflow_checkpoint")
+        self.assertEqual(args, {"phase": "plan", "summary": "Create files."})
+
+    def test_invalid_workflow_phase_reports_the_allowed_phases(self) -> None:
+        with self.assertRaisesRegex(
+            MODULE.HarnessError,
+            "phase must be one of: blocked, complete, design, implement, inspect, intake, plan, review, verify",
+        ):
+            MODULE.validate_action_payload({
+                "action": "workflow_checkpoint",
+                "args": {"phase": "inspect-and-plan", "summary": "Plan work."},
+            })
+
+    def test_local_model_request_uses_llama_json_schema_for_action_envelope(self) -> None:
+        root = Path(self.temp_dir.name)
+        run_dir = root / "structured-run"
+        project_dir = run_dir / "project"
+        harness = MODULE.AgentHarness(
+            task="schema task",
+            config={
+                "provider": "local", "constrain_local_actions": True,
+                "endpoint": "http://model.invalid/v1/chat/completions",
+            },
+            run_dir=run_dir,
+            project_dir=project_dir,
+            template_dir=None,
+        )
+        harness.prepare()
+
+        class FakeResponse:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return None
+            def read(self):
+                return b'{"choices":[{"message":{"content":"{\\"action\\":\\"finish\\",\\"args\\":{}}"}}]}'
+
+        captured = {}
+        def fake_urlopen(request, timeout):
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        with patch.object(MODULE.urllib.request, "urlopen", side_effect=fake_urlopen):
+            harness.call_model()
+        schema = captured["payload"]["response_format"]["schema"]
+        self.assertEqual(captured["payload"]["response_format"]["type"], "json_object")
+        self.assertEqual(schema["properties"]["action"]["enum"], sorted(MODULE.ACTION_NAMES))
+        self.assertEqual(schema["required"], ["action", "args"])
+        self.assertFalse(schema["additionalProperties"])
+        harness.release_workspace_lease()
+
     def test_task_profile_replaces_global_static_page_gates(self) -> None:
         config = {
             "required_files": ["index.html", "styles.css", "app.js"],
@@ -236,6 +297,7 @@ class HarnessUnitTests(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["model"], "beefy-model")
         self.assertNotIn("api_key", payload)
+        self.assertNotIn("response_format", payload)
         self.assertEqual(result["provider"], "openai_compatible")
         persisted_config = (run_dir / "config.json").read_text(encoding="utf-8")
         self.assertNotIn("secret-key-that-must-not-persist", persisted_config)
@@ -860,6 +922,35 @@ stale context from an older read
         self.assertEqual(qwen.mode_suffix(), "/no_think")
         qwen.config["reasoning_level"] = "standard"
         self.assertEqual(qwen.mode_suffix(), "/think")
+
+    def test_local_structured_actions_reserve_output_without_enabling_reasoning(self) -> None:
+        settings = MODULE.reasoning_settings(
+            {
+                "provider": "local",
+                "model": "Gemma-4-E2B-Q4_0",
+                "reasoning_level": "off",
+                "constrain_local_actions": True,
+                "action_output_tokens": 2048,
+            }
+        )
+
+        self.assertEqual(settings["budget"], 0)
+        self.assertEqual(settings["max_tokens"], 2048)
+        self.assertFalse(settings["enabled"])
+
+    def test_local_action_output_reserve_does_not_change_remote_provider_budget(self) -> None:
+        settings = MODULE.reasoning_settings(
+            {
+                "provider": MODULE.OPENAI_COMPATIBLE_PROVIDER,
+                "model": "Gemma-4-E2B-Q4_0",
+                "reasoning_level": "off",
+                "constrain_local_actions": True,
+                "action_output_tokens": 2048,
+            }
+        )
+
+        self.assertEqual(settings["max_tokens"], 700)
+        self.assertEqual(settings["budget"], 0)
 
     def test_reasoning_level_aliases_and_invalid_values(self) -> None:
         self.assertEqual(MODULE.normalize_reasoning_level("medium"), "standard")

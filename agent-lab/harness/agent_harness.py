@@ -65,6 +65,23 @@ ACTION_NAMES = {
     "find_skills",
     "finish",
 }
+ACTION_ARGUMENTS = {
+    "list_files": ({}, {"path": str, "max_depth": int}),
+    "read_file": ({"path": str}, {"max_chars": int}),
+    "write_file": ({"path": str, "content": str}, {}),
+    "delete_file": ({"path": str}, {}),
+    "replace_text": ({"path": str, "old_text": str, "new_text": str}, {"expected_replacements": int}),
+    "apply_patch": ({"patch": str}, {}),
+    "run_command": ({"command": str}, {}),
+    "git_diff": ({}, {"max_chars": int}),
+    "workflow_checkpoint": ({"phase": str, "summary": str}, {"next_action": str, "artifacts": list}),
+    "find_skills": ({}, {"query": str, "source": str}),
+    "finish": ({}, {"status": str, "summary": str}),
+}
+ACTION_REQUIRED_NONEMPTY = {"path", "old_text", "patch", "command", "phase", "summary", "next_action"}
+WORKFLOW_PHASES = {
+    "intake", "inspect", "design", "plan", "implement", "verify", "review", "complete", "blocked"
+}
 FORBIDDEN_SHELL_CHARS = set("&|;`><")
 DEFAULT_IGNORED_DIRECTORIES = {
     ".git",
@@ -205,6 +222,14 @@ def reasoning_settings(config: dict[str, Any]) -> dict[str, Any]:
     answer_reserve = int(config.get("reasoning_answer_tokens", 1024))
     if budget >= 0 and level != "off":
         configured_max = max(configured_max, budget + answer_reserve)
+    if (
+        str(config.get("provider", "local")) != OPENAI_COMPATIBLE_PROVIDER
+        and bool(config.get("constrain_local_actions", False))
+    ):
+        action_output_tokens = int(config.get("action_output_tokens", 2048))
+        if action_output_tokens < 1:
+            raise ValueError("action output token reserve must be a positive integer")
+        configured_max = max(configured_max, action_output_tokens)
 
     return {
         "level": level,
@@ -571,6 +596,63 @@ def extract_json_object(content: str) -> dict[str, Any]:
     if value is not None and "action" in value:
         return value
     raise HarnessError("model response must be a JSON action object")
+
+
+def local_action_response_schema() -> dict[str, Any]:
+    """A small schema supported by the bundled llama.cpp response_format API."""
+    return {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": sorted(ACTION_NAMES)},
+            "args": {"type": "object"},
+            "message": {"type": "string"},
+        },
+        "required": ["action", "args"],
+        "additionalProperties": False,
+    }
+
+
+def validate_action_payload(payload: Any) -> tuple[str, dict[str, Any]]:
+    """Reject malformed action arguments before they can reach a tool."""
+    if not isinstance(payload, dict):
+        raise HarnessError("model response must be a JSON action object")
+    unexpected = set(payload) - {"action", "args", "message"}
+    if unexpected:
+        raise HarnessError("unknown action fields: " + ", ".join(sorted(map(str, unexpected))))
+    action = payload.get("action")
+    if not isinstance(action, str) or action not in ACTION_NAMES:
+        raise HarnessError("action must be one of " + ", ".join(sorted(ACTION_NAMES)))
+    if "args" not in payload or not isinstance(payload["args"], dict):
+        raise HarnessError("args must be a JSON object")
+    if "message" in payload and not isinstance(payload["message"], str):
+        raise HarnessError("message must be a string when provided")
+    args = payload["args"]
+    required, optional = ACTION_ARGUMENTS[action]
+    missing = [key for key in required if key not in args]
+    if missing:
+        raise HarnessError(f"{action} args missing required fields: " + ", ".join(sorted(missing)))
+    unexpected_args = set(args) - set(required) - set(optional)
+    if unexpected_args:
+        raise HarnessError(f"{action} args contain unknown fields: " + ", ".join(sorted(map(str, unexpected_args))))
+    for key, value in args.items():
+        expected = required.get(key, optional.get(key))
+        valid = isinstance(value, expected) and not (expected is int and isinstance(value, bool))
+        if expected is list:
+            valid = isinstance(value, list) and all(isinstance(item, str) for item in value)
+        if not valid:
+            label = "list of strings" if expected is list else {str: "a string", int: "an integer"}.get(expected, "a valid value")
+            raise HarnessError(f"{action} args.{key} must be {label}")
+        if key in ACTION_REQUIRED_NONEMPTY and not value.strip():
+            raise HarnessError(f"{action} args.{key} must not be empty")
+    if action == "workflow_checkpoint" and args["phase"] not in WORKFLOW_PHASES:
+        raise HarnessError(
+            "workflow_checkpoint args.phase must be one of: " + ", ".join(sorted(WORKFLOW_PHASES))
+        )
+    if action == "find_skills" and args.get("source", "local") not in {"local", "remote"}:
+        raise HarnessError("find_skills args.source must be local or remote")
+    if action == "finish" and args.get("status", "success") not in {"success", "blocked"}:
+        raise HarnessError("finish args.status must be success or blocked")
+    return action, args
 
 
 def relative_name(path: Path, root: Path) -> str:
@@ -1754,6 +1836,11 @@ class AgentHarness:
                 payload["reasoning_format"] = "deepseek"
             if bool(self.config.get("reasoning_effort_supported", False)):
                 payload["reasoning_effort"] = reasoning["effort"]
+            if bool(self.config.get("constrain_local_actions", False)):
+                payload["response_format"] = {
+                    "type": "json_object",
+                    "schema": local_action_response_schema(),
+                }
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -2039,14 +2126,11 @@ class AgentHarness:
                     self.messages.append({"role": "assistant", "content": content})
                     self.save_transcript()
                     self.save_progress(turn=turn, checkpoint="model_response")
+                action = None
                 try:
                     parsed = extract_json_object(content)
-                    action = parsed.get("action")
-                    args = parsed.get("args", {})
-                    if action not in ACTION_NAMES:
-                        raise HarnessError(f"action must be one of {sorted(ACTION_NAMES)}")
-                    if not isinstance(args, dict):
-                        raise HarnessError("args must be a JSON object")
+                    action = parsed.get("action") if isinstance(parsed, dict) else None
+                    action, args = validate_action_payload(parsed)
                 except (HarnessError, AttributeError) as exc:
                     error = str(exc)
                     self.logger.event("invalid_model_action", turn=turn, error=error, content=content)
@@ -2057,12 +2141,22 @@ class AgentHarness:
                         self.save_summary()
                         return 2
                     self.recovery_event("recovery_retry", decision, turn=turn)
-                    correction = (
-                        f"Your last response was invalid: {error}. This is repair attempt {decision.attempt} "
-                        f"of {decision.limit}. Return exactly one complete JSON object using one of the documented "
-                        "actions. Do not use Markdown fences, do not apologize, and make sure every opening brace "
-                        "has a matching closing brace."
-                    )
+                    if isinstance(action, str) and action in ACTION_ARGUMENTS:
+                        required_fields = sorted(ACTION_ARGUMENTS[action][0])
+                        allowed_fields = sorted(set(ACTION_ARGUMENTS[action][0]) | set(ACTION_ARGUMENTS[action][1]))
+                        correction = (
+                            f"{error}. Repair attempt {decision.attempt} of {decision.limit}. Return one corrected "
+                            f"JSON action for {action}; required args fields: {required_fields}; allowed args fields: "
+                            f"{allowed_fields}. Keep args as an object, remove unknown fields, and correct each field's "
+                            "type. Retry this tool action once only after its arguments pass validation."
+                        )
+                    else:
+                        correction = (
+                            f"Your last response was invalid: {error}. This is repair attempt {decision.attempt} "
+                            f"of {decision.limit}. Return exactly one complete JSON object using one of the documented "
+                            "actions. Do not use Markdown fences, do not apologize, and make sure every opening brace "
+                            "has a matching closing brace."
+                        )
                     print(f"  invalid model response: {error} (repair attempt {decision.attempt}/{decision.limit})")
                     continue
 

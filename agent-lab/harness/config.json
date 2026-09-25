@@ -1,5 +1,7 @@
 {
   "provider": "local",
+  "constrain_local_actions": true,
+  "action_output_tokens": 2048,
   "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
   "model": "Gemma-4-E2B-Q4_0",
   "max_turns": 18,
