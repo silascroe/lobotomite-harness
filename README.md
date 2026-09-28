@@ -14,6 +14,10 @@ On Windows, from the repository root, use two PowerShell windows. The checked-in
 
 Open [http://127.0.0.1:8787](http://127.0.0.1:8787). Before starting, make sure the selected GGUF model and llama.cpp runtime are present under models/ and runtime/; those large assets are intentionally excluded from Git. Detailed setup, bridges, providers, workspaces, and operator commands are in [the operational guide](agent-lab/README.md).
 
+## Browse the interface
+
+The [static visual preview](https://silascroe.github.io/lobotomite-harness/) is a phone-friendly, read-only mock of the Agent Lab console. It has no model connection and cannot access this computer; it exists to inspect the UI without starting the local harness.
+
 ## What it contains
 
 - agent-lab/harness/ — model-provider integration, tool/action handling, workflow and recovery control, approvals, persistence, review evidence, and workspace leases.
@@ -33,4 +37,3 @@ The app can work in scratch folders, persistent Agent Lab projects, or an explic
 - [Detailed operator guide](agent-lab/README.md)
 
 Python unit tests and UI contract checks are documented in the operator guide. Model benchmarks are slower, depend on the local inference server, and write ignored run artifacts; they are not part of the quick test loop.
-

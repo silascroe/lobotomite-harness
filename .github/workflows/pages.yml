@@ -1,0 +1,54 @@
+name: Deploy Agent Lab visual preview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/pages.yml"
+      - "README.md"
+      - "agent-lab/ui/favicon.svg"
+      - "agent-lab/ui/styles.css"
+      - "site/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Test and assemble static preview
+        shell: bash
+        run: |
+          node --check site/preview.js
+          node --test site/test_preview.mjs
+          mkdir -p _site/assets
+          cp site/index.html _site/index.html
+          cp site/preview.js _site/preview.js
+          cp site/preview.css _site/assets/preview.css
+          cp agent-lab/ui/styles.css _site/assets/agent-lab.css
+          cp agent-lab/ui/favicon.svg _site/favicon.svg
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
