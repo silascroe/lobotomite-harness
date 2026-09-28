@@ -1,0 +1,21 @@
+{
+  "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+  "model": "Gemma-4-E4B-Q4_0",
+  "max_turns": 8,
+  "max_tokens": 2048,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "mode": "gemma_think",
+  "reasoning_level": "standard",
+  "reasoning_profile": "gemma",
+  "reasoning_answer_tokens": 1024,
+  "personality": "slight_demon",
+  "tool_output_chars": 10000,
+  "command_timeout_seconds": 20,
+  "max_file_bytes": 60000,
+  "max_total_project_bytes": 500000,
+  "required_files": ["answer.txt"],
+  "require_validation": false,
+  "allow_commands": ["python", "py", "node", "npm"]
+}
+

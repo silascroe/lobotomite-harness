@@ -1,0 +1,20 @@
+{
+  "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+  "model": "Qwen3-8B-Q4_K_M",
+  "max_turns": 8,
+  "max_tokens": 700,
+  "temperature": 0.7,
+  "top_p": 0.8,
+  "mode": "no_think",
+  "reasoning_level": "off",
+  "reasoning_profile": "qwen",
+  "personality": "slight_demon",
+  "tool_output_chars": 10000,
+  "command_timeout_seconds": 20,
+  "max_file_bytes": 60000,
+  "max_total_project_bytes": 500000,
+  "required_files": ["answer.txt"],
+  "require_validation": false,
+  "allow_commands": ["python", "py", "node", "npm"]
+}
+

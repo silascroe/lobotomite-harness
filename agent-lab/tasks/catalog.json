@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "tasks": {
+    "001-static-page.md": {
+      "description": "Full UI build benchmark with an external static-page evaluator.",
+      "gates": {
+        "required_files": ["index.html", "styles.css", "app.js"],
+        "require_validation": true,
+        "require_workflow_gates": true,
+        "evaluator": "agent-lab/checks/check_static_page.py"
+      }
+    },
+    "002-file-roundtrip.md": {
+      "description": "Fast tool-chain smoke test: inspect, write, read, validate, and review.",
+      "gates": {
+        "required_files": ["agent-check.md", "agent-check.mjs"],
+        "require_validation": true,
+        "require_workflow_gates": true,
+        "evaluator": "agent-lab/checks/check_file_roundtrip.py"
+      }
+    },
+    "003-structured-validation.md": {
+      "description": "Create a small machine-readable report and validate its shape locally.",
+      "gates": {
+        "required_files": ["health-report.json", "validate-report.mjs"],
+        "require_validation": true,
+        "require_workflow_gates": true,
+        "evaluator": "agent-lab/checks/check_structured_validation.py"
+      }
+    },
+    "004-mini-project.md": {
+      "description": "A smaller multi-file browser build for quick UI iteration.",
+      "gates": {
+        "required_files": ["index.html", "styles.css", "app.js"],
+        "require_validation": true,
+        "require_workflow_gates": true,
+        "evaluator": "agent-lab/checks/check_mini_project.py"
+      }
+    }
+  }
+}
+

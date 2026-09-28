@@ -1,0 +1,32 @@
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+agent-lab/.secrets/
+
+# Generated agent state and user workspaces
+agent-lab/runs/
+agent-lab/chat-sessions/
+agent-lab/projects/
+agent-lab/.workspace-locks/
+agent-lab/*-bridge-state.json
+agent-lab/*-bridge-logs/
+agent-lab/cloudflared/
+agent-lab/ui/*.log
+agent-lab/*.log
+agent-lab/benchmarks/results/
+
+# Local model/runtime assets and downloaded binaries
+models/
+runtime/
+tools/*.exe
+
+# Python and local-tool caches
+__pycache__/
+*.py[cod]
+
+# Remote attachments and research-only upstream material
+.codex-remote-attachments/
+.research/superpowers-upstream/
+.research/agent-reference/
+

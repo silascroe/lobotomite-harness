@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Agent Lab</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=20260920-studio-8">
+  <link rel="stylesheet" href="styles.css?v=20260922-activity-feed-1">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="header-leading">
+        <button id="sidebarToggle" class="icon-button mobile-only" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+          <span aria-hidden="true">☰</span>
+        </button>
+        <a class="brand" href="/" aria-label="Agent Lab home">
+          <span class="brand-mark" aria-hidden="true">AL</span>
+          <span class="brand-name">Agent Lab</span>
+        </a>
+      </div>
+
+      <button id="mobileWorkspaceButton" class="mobile-project-button" type="button" aria-controls="workspaceDialog" aria-expanded="false">
+        <span class="project-signal" aria-hidden="true"></span>
+        <span>
+          <strong id="topbarWorkspace">Scratch workspace</strong>
+          <small id="mobileWorkspaceLocation">Temporary folder</small>
+        </span>
+      </button>
+
+      <div class="header-actions">
+        <label class="reasoning-control" for="reasoningLevel">
+          <span>Reasoning</span>
+          <select id="reasoningLevel" title="Choose how much local reasoning to allow">
+            <option value="off">Off</option>
+            <option value="low">Low</option>
+            <option value="standard" selected>Standard</option>
+            <option value="deep">Deep</option>
+            <option value="max">Max</option>
+          </select>
+          <small id="reasoningHint">1,024 thinking tokens</small>
+        </label>
+        <label class="approval-control" for="approvalMode">
+          <span>Tools</span>
+          <select id="approvalMode" title="Choose whether mutating tools need your approval">
+            <option value="auto" selected>Auto</option>
+            <option value="confirm">Confirm</option>
+          </select>
+          <small id="approvalHint">Autonomous tools</small>
+        </label>
+        <button id="providerButton" class="header-button" type="button" aria-controls="providerDialog" aria-haspopup="dialog" title="Choose the model provider">
+          <span class="button-glyph" aria-hidden="true">◈</span>
+          <span id="providerLabel">Local</span>
+        </button>
+        <div id="runStatus" class="status-badge idle" role="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Ready</span>
+        </div>
+        <button id="inspectorToggle" class="header-button" type="button" aria-label="Details" aria-controls="rightRail" aria-expanded="false">
+          <span class="button-glyph" aria-hidden="true">≡</span>
+          <span>Details</span>
+        </button>
+      </div>
+    </header>
+
+    <main id="layout" class="layout" data-mode="chats">
+      <aside id="sidebar" class="navigation-rail" aria-label="Agent Lab navigation">
+        <div class="rail-fixed">
+          <button id="workspaceDialogTrigger" class="project-switcher" type="button" aria-controls="workspaceDialog" aria-haspopup="dialog">
+            <span class="project-signal" aria-hidden="true"></span>
+            <span class="project-switcher-copy">
+              <small id="workspaceMode">Scratch</small>
+              <strong id="activeProjectName">Scratch workspace</strong>
+              <span id="workspaceLocation">Temporary folder</span>
+            </span>
+            <span class="project-chevron" aria-hidden="true">›</span>
+          </button>
+
+          <div class="mode-switcher" role="tablist" aria-label="Workspace mode">
+            <button id="chatsModeButton" class="mode-button" type="button" role="tab" aria-selected="true" aria-controls="chatNavigation chatSurface" tabindex="0">Chats</button>
+            <button id="runsModeButton" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="runNavigation runSurface" tabindex="-1">Runs</button>
+          </div>
+        </div>
+
+        <section id="chatNavigation" class="rail-mode" aria-label="Chats">
+          <div class="rail-toolbar">
+            <button id="newChatButton" class="primary-button rail-primary" type="button">
+              <span aria-hidden="true">＋</span>
+              New chat
+            </button>
+          </div>
+          <label class="search-field" for="sessionSearch">
+            <span aria-hidden="true">⌕</span>
+            <span class="sr-only">Search conversations</span>
+            <input id="sessionSearch" type="search" autocomplete="off" placeholder="Search chats">
+          </label>
+          <div id="sessionList" class="record-list" aria-live="polite">
+            <div class="muted">No conversations yet.</div>
+          </div>
+        </section>
+
+        <section id="runNavigation" class="rail-mode" aria-label="Runs" hidden>
+          <div class="rail-toolbar">
+            <button id="newRunButton" class="primary-button rail-primary" type="button">
+              <span aria-hidden="true">＋</span>
+              New run
+            </button>
+            <button id="refreshRuns" class="icon-button" type="button" title="Refresh runs" aria-label="Refresh runs">↻</button>
+          </div>
+          <div class="rail-list-heading">
+            <span>Recent runs</span>
+            <small>Evaluations</small>
+          </div>
+          <div id="runList" class="record-list" aria-live="polite">
+            <div class="muted">No runs loaded yet.</div>
+          </div>
+        </section>
+
+        <footer class="rail-footer">
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span>Local harness</span>
+          <small>127.0.0.1</small>
+        </footer>
+      </aside>
+
+      <section class="work-surface">
+        <section id="chatSurface" class="mode-surface chat-surface" aria-labelledby="chatHeading">
+          <header class="record-header">
+            <div class="record-heading-copy">
+              <p id="workspaceHeadingWorkspace" class="record-context">Scratch workspace</p>
+              <h1 id="chatHeading">Local conversation</h1>
+              <p id="workspaceSubtitle">Ask the local model to inspect, explain, or build inside the selected project.</p>
+              <span id="workspaceTitle" class="sr-only">Local session</span>
+            </div>
+            <div class="record-state">
+              <span id="chatStatus">ready</span>
+            </div>
+          </header>
+
+          <div id="chatMessages" class="chat-messages empty-panel" aria-live="polite">
+            <div class="empty-symbol" aria-hidden="true">◇</div>
+            <h2>Start with a real job</h2>
+            <p>Ask a question, request a change, or point the agent at a problem in this project.</p>
+          </div>
+
+          <div class="composer-dock">
+            <button id="stopJobButton" class="job-recovery" type="button" hidden>Stop current turn</button>
+            <button id="retryJobButton" class="job-recovery" type="button" hidden>Retry turn</button>
+            <div id="approvalJob" class="job-recovery approval-job" hidden>
+              <span id="approvalJobCopy">The agent wants to change the project.</span>
+              <button id="approveJobButton" class="secondary-button" type="button">Approve</button>
+              <button id="denyJobButton" class="text-button" type="button">Deny</button>
+            </div>
+            <section class="chat-composer" aria-label="Message composer">
+              <textarea id="chatInput" rows="3" placeholder="Ask something or give it a job..."></textarea>
+              <div class="composer-footer">
+                <div class="composer-target">
+                  <span class="project-signal" aria-hidden="true"></span>
+                  <span id="composerWorkspace">Scratch workspace</span>
+                </div>
+                <span id="chatNote" class="composer-note">Ctrl + Enter to send</span>
+                <button id="sendButton" class="primary-button send-button" type="button">
+                  Send
+                  <span aria-hidden="true">↗</span>
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="runSurface" class="mode-surface run-surface" aria-labelledby="runTitle" hidden>
+          <div id="runEmptyState" class="surface-empty">
+            <div class="empty-symbol" aria-hidden="true">△</div>
+            <h2>Select a run</h2>
+            <p>Inspect a previous evaluation or give the local agent a new task.</p>
+            <button id="emptyNewRunButton" class="primary-button" type="button">New run</button>
+          </div>
+          <article id="runOverview" class="run-overview" hidden>
+            <header class="record-header">
+              <div class="record-heading-copy">
+                <p id="runPresetLabel" class="record-context">Custom task</p>
+                <p id="runProjectLabel" class="record-context">Scratch workspace</p>
+                <h1 id="runTitle">Run</h1>
+                <p id="runSummary">Select a run to inspect its outcome.</p>
+              </div>
+              <div class="record-actions">
+                <button id="stopRunButton" class="secondary-button" type="button" hidden>Stop run</button>
+                <button id="approveRunButton" class="secondary-button approval-action" type="button" hidden>Approve action</button>
+                <button id="denyRunButton" class="text-button approval-action" type="button" hidden>Deny</button>
+                <button id="resumeRunButton" class="secondary-button" type="button" hidden>Resume run</button>
+                <button id="runDetailsButton" class="secondary-button" type="button">Open details</button>
+              </div>
+            </header>
+            <section id="runActivityPanel" class="run-activity-panel" aria-labelledby="runActivityHeading" hidden>
+              <header class="run-activity-header">
+                <div>
+                  <p class="run-activity-kicker">Live trace</p>
+                  <h2 id="runActivityHeading">The agent is working</h2>
+                  <p id="runActivityDescription">Summaries derived from recorded model, tool, and workflow events.</p>
+                </div>
+                <div class="run-activity-meta">
+                  <span id="runActivityState" class="run-activity-state running" role="status" aria-live="polite">Running</span>
+                  <small id="runActivityCount">0 recorded steps</small>
+                </div>
+              </header>
+              <div id="runActivityNow" class="run-activity-now" role="status" aria-live="polite">
+                <span class="run-activity-now-label">Now</span>
+                <div class="run-activity-now-content">
+                  <strong id="runActivityNowTitle">Starting the run…</strong>
+                  <span id="runActivityNowCopy">Waiting for the first checkpoint.</span>
+                </div>
+              </div>
+              <div id="runActivityTimeline" class="run-activity-timeline" aria-live="polite">
+                <div id="runActivityFeed" class="run-activity-feed"></div>
+              </div>
+              <footer class="run-activity-footer">
+                <span id="runActivityFeedHint">The newest step stays in view while you watch.</span>
+                <button id="runActivityJump" class="text-button" type="button" hidden>Jump to latest</button>
+              </footer>
+            </section>
+            <div class="run-hero">
+              <div class="run-hero-mark" aria-hidden="true">AL</div>
+              <div>
+                <small>Evaluation record</small>
+                <h2>The work, in view</h2>
+                <p>The live trace keeps the important moves visible. Details still holds the complete workflow, change review, artifacts, and raw process output.</p>
+              </div>
+            </div>
+          </article>
+        </section>
+      </section>
+
+      <button id="detailsBackdrop" class="drawer-backdrop" type="button" aria-label="Close details" hidden></button>
+      <aside id="rightRail" class="details-drawer" aria-label="Details" aria-hidden="true" inert>
+        <header class="details-header">
+          <div>
+            <p id="inspectorMeta">Session</p>
+            <h2 id="inspectorTitle">Details</h2>
+          </div>
+          <button id="closeInspector" class="icon-button" type="button" aria-label="Close details">×</button>
+        </header>
+
+        <div id="inspectorTabs" class="details-tabs" role="tablist" aria-label="Record details">
+          <button class="details-tab active" type="button" role="tab" data-details-tab="overview" aria-selected="true" aria-controls="detailsOverview">Overview</button>
+          <button class="details-tab" type="button" role="tab" data-details-tab="workflow" aria-selected="false" aria-controls="detailsWorkflow">Workflow</button>
+          <button class="details-tab" type="button" role="tab" data-details-tab="review" aria-selected="false" aria-controls="detailsReview">Changes</button>
+          <button class="details-tab" type="button" role="tab" data-details-tab="activity" aria-selected="false" aria-controls="detailsActivity">Activity</button>
+          <button class="details-tab" type="button" role="tab" data-details-tab="files" aria-selected="false" aria-controls="detailsFiles">Files</button>
+        </div>
+
+        <div class="details-scroll">
+          <section id="detailsOverview" class="details-panel" role="tabpanel">
+            <div id="inspectorContent" class="detail-list"></div>
+          </section>
+
+          <section id="detailsWorkflow" class="details-panel" role="tabpanel" hidden>
+            <div id="workflowRail" class="workflow-rail">
+              <div class="workflow-header">
+                <div>
+                  <small>Current phase</small>
+                  <h3 id="workflowHeading">Intake</h3>
+                </div>
+                <span id="workflowStatus" class="workflow-status active">Active</span>
+              </div>
+              <div id="workflowSteps" class="workflow-steps" aria-label="Workflow phases"></div>
+              <div class="workflow-copy">
+                <p id="workflowSummary">Request received.</p>
+                <p><strong>Next</strong><span id="workflowNext">Understand the request and inspect the project.</span></p>
+              </div>
+            </div>
+          </section>
+
+          <section id="detailsReview" class="details-panel" role="tabpanel" hidden>
+            <div class="review-header">
+              <div>
+                <small>Change review</small>
+                <h3>Project changes</h3>
+              </div>
+              <span id="reviewStatus" class="review-status">Not reviewed</span>
+            </div>
+            <p id="reviewSummary" class="review-summary">The harness has not captured a diff for this record yet.</p>
+            <div id="reviewStats" class="review-stats"></div>
+            <div id="reviewFileList" class="review-file-list empty-panel">
+              <div>No changed files.</div>
+              <small>Run a diff review after making changes.</small>
+            </div>
+            <pre id="reviewDiff" class="review-diff">No diff captured.</pre>
+          </section>
+
+          <section id="detailsActivity" class="details-panel" role="tabpanel" hidden>
+            <div class="panel-caption">
+              <span>Timeline</span>
+              <small id="turnCount">0 model calls</small>
+            </div>
+            <div id="activity" class="activity-list empty-panel">
+              <div>No activity yet.</div>
+              <small>Runs and tool calls will appear here.</small>
+            </div>
+          </section>
+
+          <section id="detailsFiles" class="details-panel" role="tabpanel" hidden>
+            <div id="filePreview" class="file-preview" hidden>
+              <div class="file-preview-header">
+                <span>File preview</span>
+                <button id="closeFilePreview" class="text-button" type="button">Back to files</button>
+              </div>
+              <pre id="fileViewer">Select a file to preview it.</pre>
+            </div>
+            <div id="filesIndex">
+              <div class="panel-caption">
+                <span>Artifacts</span>
+                <small id="fileCount">—</small>
+              </div>
+              <div id="fileList" class="file-list empty-panel">
+                <div>No artifacts yet.</div>
+                <small>Files created during this record will appear here.</small>
+              </div>
+            </div>
+          </section>
+
+          <details class="raw-output-disclosure">
+            <summary>Raw process output</summary>
+            <pre id="rawOutput">No process output yet.</pre>
+          </details>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <dialog id="workspaceDialog" class="modal" aria-labelledby="workspaceDialogTitle">
+    <form method="dialog" class="modal-shell">
+      <header class="modal-header">
+        <div>
+          <p>Project context</p>
+          <h2 id="workspaceDialogTitle">Choose where the agent works</h2>
+        </div>
+        <button id="closeWorkspaceDialog" class="icon-button" type="submit" value="cancel" aria-label="Close project settings">×</button>
+      </header>
+
+      <div class="modal-body">
+        <p class="modal-intro">New chats and runs use this location. Existing records keep the workspace they started with.</p>
+
+        <section class="workspace-choice">
+          <div class="choice-heading">
+            <div>
+              <h3>Scratch or managed project</h3>
+              <p>Scratch work is disposable. Managed projects persist across chats and runs.</p>
+            </div>
+          </div>
+          <label for="projectSelect">Current project</label>
+          <select id="projectSelect">
+            <option value="">Scratch workspace</option>
+          </select>
+          <div class="inline-form">
+            <label class="grow" for="projectName">
+              <span>New managed project</span>
+              <input id="projectName" type="text" maxlength="80" autocomplete="off" placeholder="Project name">
+            </label>
+            <button id="createProjectButton" class="secondary-button align-end" type="button">Create</button>
+          </div>
+        </section>
+
+        <section class="workspace-choice">
+          <div class="choice-heading">
+            <div>
+              <h3>Existing folder</h3>
+              <p>Give the agent an explicit folder elsewhere on this machine.</p>
+            </div>
+          </div>
+          <label for="workspacePath">Folder path</label>
+          <input id="workspacePath" class="mono-input" type="text" spellcheck="false" autocomplete="off" placeholder="C:\path\to\project">
+          <div class="button-row">
+            <button id="openProjectButton" class="secondary-button" type="button">Open folder</button>
+            <button id="clearWorkspace" class="text-button" type="button">Use scratch instead</button>
+          </div>
+        </section>
+
+        <div id="workspaceStatus" class="workspace-status" role="status">Scratch work is isolated and disposable.</div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="runDialog" class="modal" aria-labelledby="runDialogTitle">
+    <form method="dialog" class="modal-shell run-modal">
+      <header class="modal-header">
+        <div>
+          <p>Evaluation</p>
+          <h2 id="runDialogTitle">Start a new run</h2>
+        </div>
+        <button id="closeRunDialog" class="icon-button" type="submit" value="cancel" aria-label="Close new run">×</button>
+      </header>
+      <div class="modal-body">
+        <label for="taskPreset">Starting point</label>
+        <select id="taskPreset">
+          <option value="custom">Custom task</option>
+        </select>
+        <p id="taskPresetDescription" class="task-preset-description">Choose a built-in smoke test or write a custom task.</p>
+
+        <label for="taskText">Task</label>
+        <textarea id="taskText" rows="10" spellcheck="true" placeholder="Describe what the agent should build or investigate."></textarea>
+
+        <section class="skill-config" aria-labelledby="skillConfigTitle">
+          <div class="skill-config-heading">
+            <div>
+              <h3 id="skillConfigTitle">Working skills</h3>
+              <p id="skillSummary">Loading the trusted defaults…</p>
+            </div>
+            <button id="resetSkillsButton" class="text-button" type="button">Reset</button>
+          </div>
+          <div id="skillOverride" class="skill-options" aria-label="Skill selection"></div>
+          <div class="skill-config-actions">
+            <button id="findSkillsButton" class="secondary-button" type="button" aria-expanded="false" aria-controls="skillFinder">Find skills</button>
+            <small>Defaults are recorded with this run. Project-local skills are never enabled silently.</small>
+          </div>
+          <div id="skillFinder" class="skill-finder" hidden>
+            <div class="skill-finder-row">
+              <label class="grow" for="skillSearch">
+                <span>Search the catalog</span>
+                <input id="skillSearch" type="search" autocomplete="off" placeholder="e.g. browser testing">
+              </label>
+              <button id="searchSkillsButton" class="secondary-button align-end" type="button">Search local</button>
+              <button id="searchRemoteSkillsButton" class="text-button align-end" type="button">Search skills.sh</button>
+            </div>
+            <div id="skillResults" class="skill-results" aria-live="polite">Search the local catalog or explicitly search skills.sh.</div>
+          </div>
+        </section>
+
+        <label class="check-row" for="useGates">
+          <input id="useGates" type="checkbox" checked>
+          <span>
+            <strong>Apply completion gates</strong>
+            <small>Require workflow and verification checks before the run can finish.</small>
+          </span>
+        </label>
+
+        <div class="run-target">
+          <span>Target project</span>
+          <strong id="runTarget">Scratch workspace</strong>
+        </div>
+        <div id="launchNote" class="launch-note" role="status">Runs use the active project and reasoning level.</div>
+      </div>
+      <footer class="modal-footer">
+        <button class="text-button" type="submit" value="cancel">Cancel</button>
+        <button id="runButton" class="primary-button" type="button">Start run</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="providerDialog" class="modal" aria-labelledby="providerDialogTitle">
+    <form method="dialog" class="modal-shell provider-modal">
+      <header class="modal-header">
+        <div>
+          <p>Model connection</p>
+          <h2 id="providerDialogTitle">Choose the brain</h2>
+        </div>
+        <button id="closeProviderDialog" class="icon-button" type="submit" value="cancel" aria-label="Close model connection">×</button>
+      </header>
+      <div class="modal-body">
+        <p class="modal-intro">The local model remains the default. An API provider runs through the same workspace, tools, workflow gates, approvals, and crash recovery.</p>
+        <label for="providerType">Provider</label>
+        <select id="providerType">
+          <option value="local">Local model</option>
+          <option value="openai_compatible">OpenAI-compatible API</option>
+        </select>
+
+        <section id="remoteProviderFields" class="provider-fields" hidden>
+          <label for="providerEndpoint">Chat completions endpoint</label>
+          <input id="providerEndpoint" type="url" spellcheck="false" autocomplete="url" placeholder="https://api.openai.com/v1/chat/completions">
+          <label for="providerModel">Model name</label>
+          <input id="providerModel" type="text" spellcheck="false" autocomplete="off" placeholder="gpt-5.6">
+          <label for="providerApiKey">API key</label>
+          <input id="providerApiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="Paste a key for this session only">
+          <small id="providerKeyHint" class="form-hint">The key stays in memory while this Agent Lab process is running. It is never written to the project, transcript, or Git.</small>
+        </section>
+        <div id="providerStatus" class="workspace-status" role="status">Local model selected.</div>
+      </div>
+      <footer class="modal-footer">
+        <button class="text-button" type="submit" value="cancel">Cancel</button>
+        <button id="saveProviderButton" class="primary-button" type="button">Use provider</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <script src="app.js?v=20260922-activity-feed-1"></script>
+</body>
+</html>
+

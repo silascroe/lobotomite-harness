@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Lab</title>
+  <desc id="desc">A copper agent portal mark on a dark olive field.</desc>
+  <rect width="64" height="64" rx="14" fill="#151713"/>
+  <rect x="2.5" y="2.5" width="59" height="59" rx="12" fill="none" stroke="#d38b62" stroke-width="3"/>
+  <path d="M16 40 32 15l16 25" fill="none" stroke="#ebe7d9" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M22 34h20" fill="none" stroke="#d38b62" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="32" cy="46" r="5" fill="#91b8a5"/>
+  <path d="M47 13v9M42.5 17.5h9" fill="none" stroke="#d2af68" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
+

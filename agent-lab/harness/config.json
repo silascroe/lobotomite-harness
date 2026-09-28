@@ -1,0 +1,67 @@
+{
+  "provider": "local",
+  "constrain_local_actions": true,
+  "action_output_tokens": 2048,
+  "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+  "model": "Gemma-4-E2B-Q4_0",
+  "max_turns": 18,
+  "max_tokens": 2048,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "mode": "gemma_think",
+  "reasoning_level": "standard",
+  "reasoning_profile": "gemma",
+  "reasoning_answer_tokens": 1024,
+  "context_max_tokens": 6000,
+  "context_recent_messages": 12,
+  "personality": "slight_demon",
+  "require_workflow_gates": true,
+  "allow_remote_skill_search": false,
+  "tool_output_chars": 10000,
+  "max_review_diff_chars": 50000,
+  "command_timeout_seconds": 20,
+  "max_file_bytes": 60000,
+  "max_total_project_bytes": 50000000,
+  "ignored_directories": [
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".cache",
+    ".codex-remote-attachments",
+    ".secrets",
+    "chat-sessions",
+    "cloudflared",
+    "models",
+    "projects",
+    "runtime",
+    "runs",
+    "telegram-bridge-logs",
+    "tools"
+  ],
+  "required_files": [
+    "index.html",
+    "styles.css",
+    "app.js"
+  ],
+  "require_validation": true,
+  "recovery": {
+    "max_retries_per_failure": 1,
+    "max_duplicate_action_retries": 1
+  },
+  "evaluator": "agent-lab/checks/check_static_page.py",
+  "allow_commands": [
+    "python",
+    "py",
+    "node",
+    "npm"
+  ],
+  "allow_network": false
+}
+
