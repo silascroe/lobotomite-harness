@@ -276,3 +276,10 @@ test("closed off-canvas regions are removed from keyboard navigation", () => {
   assert.match(app, /function syncResponsiveInert\(/);
   assert.match(app, /sidebar["']\)\.toggleAttribute\(["']inert["'], mobile/);
 });
+
+test("evaluator repair events and Inspector share persisted episode data", () => {
+  for (const event of ["repair_episode_started", "repair_rechecked", "repair_episode_finished"]) assert.ok(app.includes(`case "${event}"`));
+  assert.match(app, /record\?\.summary\?\.repair_episode \|\| record\?\.progress\?\.repair_episode/);
+  assert.match(app, /detailRow\("Remaining findings", escapeText/);
+  assert.match(app, /detailRow\("Repair turns", escapeText/);
+});

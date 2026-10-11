@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from finding_messages import findings_for
 
 
 def main() -> int:
@@ -22,13 +23,15 @@ def main() -> int:
     checks["note_purpose"] = bool(re.search(r"(?m)^(?!\s*(?:#|[-*]))\s*\S.{20,}$", note_text))
     checks["three_checklist_items"] = len(re.findall(r"(?m)^\s*(?:[-*]|\d+[.)])\s+(?:\[[ xX]\]\s*)?\S", note_text)) >= 3
     checks["exports_ok_status"] = bool(re.search(r"\bexport\s+(?:const|let)\s+status\s*=\s*['\"]ok['\"]", js))
+    infrastructure = []
     try:
         checks["module_syntax"] = module.is_file() and subprocess.run(
             ["node", "--check", str(module)], capture_output=True, timeout=5, check=False
         ).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         checks["module_syntax"] = False
-    report = {"passed": all(checks.values()), "checks": checks}
+        infrastructure.append("module_syntax")
+    report = {"passed": all(checks.values()), "checks": checks, "findings": findings_for(checks, infrastructure)}
     print(json.dumps(report))
     return 0 if report["passed"] else 1
 

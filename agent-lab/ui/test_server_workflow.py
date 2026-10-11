@@ -21,6 +21,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ServerWorkflowTests(unittest.TestCase):
+    def test_run_response_preserves_live_repair_snapshot(self):
+        run = MODULE.RUNS_DIR / "repair-test"
+        run.mkdir(parents=True)
+        repair = {"status": "active", "extension_turns_used": 2}
+        (run / "progress.json").write_text(json.dumps({"status": "running", "repair_episode": repair,
+                                                       "first_pass_passed": False}), encoding="utf-8")
+        state = MODULE.run_state("repair-test")
+        self.assertEqual(state["progress"]["repair_episode"], repair)
+        self.assertFalse(state["progress"]["first_pass_passed"])
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         MODULE.SESSIONS.clear()

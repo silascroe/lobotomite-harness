@@ -1,11 +1,35 @@
 import json
 import unittest
+import tempfile
 from pathlib import Path
 
-from catalog_matrix import build_command, summarize
+from catalog_matrix import build_command, summarize, load_run_summary
 
 
 class MatrixTest(unittest.TestCase):
+    def test_timeout_preserves_active_repair_and_does_not_claim_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "progress.json").write_text(json.dumps({"first_pass_passed": False, "model_calls": 20,
+                                                           "evaluation": {"configured": True, "passed": False}}))
+            (root / "repair.json").write_text(json.dumps({"status": "active", "extension_turns_used": 2}))
+            row = summarize("task", "deep", "run", None, load_run_summary(root, None))
+            self.assertFalse(row["passed"])
+            self.assertEqual(row["status"], "timed_out")
+            self.assertEqual(row["repair_outcome"], "active")
+            self.assertEqual(row["extension_turns_used"], 2)
+            self.assertEqual(row["model_calls"], 20)
+    def test_repaired_pass_is_not_first_pass(self):
+        item = summarize("task", "off", "run", 0, {
+            "status": "success", "evaluation": {"configured": True, "passed": True},
+            "first_pass_passed": False,
+            "repair_episode": {"status": "passed", "extension_turns_used": 3,
+                               "initial_finding_ids": ["focus"], "final_finding_ids": []}})
+        self.assertTrue(item["passed"])
+        self.assertFalse(item["first_pass_passed"])
+        self.assertTrue(item["repair_attempted"])
+        self.assertEqual(item["extension_turns_used"], 3)
+        self.assertEqual(item["repair_outcome"], "passed")
     def test_command_scopes_catalog_profile_and_reasoning(self):
         root = Path("C:/lab")
         profile = {"name": "002-file-roundtrip.md", "title": "File round-trip smoke test", "gates": {"evaluator": "agent-lab/checks/check_file_roundtrip.py"}}

@@ -7,6 +7,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from finding_messages import findings_for
 
 
 def main() -> int:
@@ -38,7 +39,7 @@ def main() -> int:
         checks["updates_count_or_cards"] = bool(re.search(r"(count|card|observation)", js, re.I))
     else:
         checks.update({"handles_submit": False, "updates_count_or_cards": False})
-    result = {"passed": all(checks.values()), "checks": checks}
+    result = {"passed": all(checks.values()), "checks": checks, "findings": findings_for(checks)}
     print(json.dumps(result, indent=2))
     return 0 if result["passed"] else 1
 

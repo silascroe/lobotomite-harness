@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from finding_messages import findings_for
 
 
 def run_validator(script: Path, report: dict, directory: Path) -> int | None:
@@ -45,13 +46,20 @@ def main() -> int:
     checks["validator_accepts_valid"] = False
     checks["validator_rejects_bad_status"] = False
     checks["validator_rejects_bad_shape"] = False
+    infrastructure = []
     if validator.is_file() and valid_report:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
-            checks["validator_accepts_valid"] = run_validator(validator, report, work) == 0
-            checks["validator_rejects_bad_status"] = run_validator(validator, {**report, "status": "bad"}, work) not in (0, None)
-            checks["validator_rejects_bad_shape"] = run_validator(validator, {**report, "checks": []}, work) not in (0, None)
-    result = {"passed": all(checks.values()), "checks": checks}
+            for key, sample, accept in [
+                ("validator_accepts_valid", report, True),
+                ("validator_rejects_bad_status", {**report, "status": "bad"}, False),
+                ("validator_rejects_bad_shape", {**report, "checks": []}, False),
+            ]:
+                code = run_validator(validator, sample, work)
+                checks[key] = code == 0 if accept else code not in (0, None)
+                if code is None:
+                    infrastructure.append(key)
+    result = {"passed": all(checks.values()), "checks": checks, "findings": findings_for(checks, infrastructure)}
     print(json.dumps(result))
     return 0 if result["passed"] else 1
 

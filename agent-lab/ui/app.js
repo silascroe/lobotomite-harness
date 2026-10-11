@@ -483,6 +483,9 @@ function eventCopy(event) {
     }
     case "finish_rejected": return `Harness rejected completion: ${data.reason || "more work is required"}`;
     case "evaluator": return `External evaluator ${data.result?.passed ? "passed" : "failed"}`;
+    case "repair_episode_started": return `Repair started: ${(data.repair_episode?.initial_finding_ids || []).join(", ")}`;
+    case "repair_rechecked": return `Repair rechecked: ${data.repair_episode?.status || "active"}`;
+    case "repair_episode_finished": return `Repair finished: ${data.repair_episode?.status || "stopped"}`;
     case "finish": return `Finished ${data.status || "run"}${data.summary ? ` — ${data.summary}` : ""}`;
     case "interactive_step_limit": return `Paused at the action limit (${data.max_steps || "maximum"})`;
     case "turn_limit": return `Stopped at the turn limit (${data.max_turns || "maximum"})`;
@@ -492,6 +495,7 @@ function eventCopy(event) {
 }
 
 function eventClass(event) {
+  if (event.event.startsWith("repair_")) return event.data?.repair_episode?.status === "passed" ? "success" : event.event === "repair_episode_finished" ? "error" : "tool";
   if (["finish", "evaluator", "assistant_message", "session_rehydrated"].includes(event.event)) return "success";
   if (event.event === "workflow_phase") {
     const phase = event.data?.state?.phase || event.data?.workflow?.phase;
@@ -749,7 +753,16 @@ function deriveActivityFeed(events) {
         break;
       case "evaluator": {
         const passed = Boolean(data.result?.passed);
-        add({ label: "Verification", title: passed ? "The evaluator passed" : "The evaluator found a problem", copy: data.result?.summary || "External evaluation completed.", icon: passed ? "✓" : "!", tone: passed ? "success" : "error", timestamp: event.timestamp });
+        add({ label: "Verification", title: data.result?.error ? "The evaluator could not grade the project" : passed ? "The evaluator passed" : "The evaluator found a problem", copy: data.result?.error || (data.result?.findings || []).map((item) => item.message).join("; ") || "External evaluation completed.", icon: passed ? "✓" : "!", tone: passed ? "success" : "error", timestamp: event.timestamp });
+        break;
+      }
+      case "repair_episode_started":
+      case "repair_rechecked":
+      case "repair_episode_finished": {
+        const repair = data.repair_episode || {};
+        const passed = repair.status === "passed";
+        const title = event.event === "repair_episode_started" ? "Repairing failed requirements" : event.event === "repair_rechecked" ? "Rechecked the repaired project" : passed ? "Repair passed the evaluator" : "Repair stopped";
+        add({ label: "Evaluator repair", title, copy: `${repair.outcome || (repair.final_finding_ids || []).join(", ")} · ${repair.extension_turns_used || 0}/${repair.extension_limit ?? 6} extra turns used`, icon: passed ? "✓" : "↻", tone: passed ? "success" : repair.status === "active" ? "tool" : "error", timestamp: event.timestamp });
         break;
       }
       case "finish":
@@ -1109,6 +1122,7 @@ function renderInspector(record = state.activeRecord) {
   const provider = providerForRecord(record);
   const taskProfile = record?.task_profile || record?.summary?.task_profile || {};
   const taskLabel = taskProfile.title || taskProfile.name || (state.activeKind === "run" ? "Custom task" : "Interactive chat");
+  const repair = record?.summary?.repair_episode || record?.progress?.repair_episode;
   const receiptLabel = toolReceipt.status === "completed"
     ? "Completed; awaiting transcript settlement"
     : toolReceipt.status === "unknown"
@@ -1126,6 +1140,12 @@ function renderInspector(record = state.activeRecord) {
     detailRow("Status", `<span class="status-inline"><span class="status-dot" aria-hidden="true"></span>${escapeText(statusLabel(status))}</span>`),
     detailRow("Model", escapeText(model)),
     detailRow("Task", escapeText(taskLabel), "muted-value"),
+    ...(repair ? [
+      detailRow("Evaluator repair", escapeText(repair.status)),
+      detailRow("Initial findings", escapeText((repair.initial_finding_ids || []).join(", ")), "muted-value"),
+      detailRow("Remaining findings", escapeText((repair.final_finding_ids || []).join(", ") || "None"), "muted-value"),
+      detailRow("Repair turns", escapeText(`${repair.repair_episode_turns} episode turns · ${repair.extension_turns_used}/${repair.extension_limit} extra turns`)),
+    ] : []),
     detailRow("Provider", escapeText(provider.provider === "local" ? "Local model" : `${provider.label} · ${provider.model || "model not set"}`)),
     detailRow("Reasoning", escapeText(reasoningLabel)),
     detailRow("Tool approvals", escapeText(normalizeApprovalMode(record?.approval_mode || state.approvalMode) === "confirm" ? "Ask before edits" : "Autonomous")),

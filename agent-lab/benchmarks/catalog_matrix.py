@@ -27,6 +27,7 @@ def build_command(root: Path, task_name: str, profile: dict, level: str, run_id:
 
 def summarize(task: str, level: str, run_id: str, returncode: int | None, summary: dict) -> dict:
     evaluation = summary.get("evaluation") or {}
+    repair = summary.get("repair_episode") or {}
     passed = returncode == 0 and summary.get("status") == "success" and evaluation.get("configured") is True and evaluation.get("passed") is True
     return {
         "task": task, "reasoning_level": level, "run_id": run_id,
@@ -38,7 +39,34 @@ def summarize(task: str, level: str, run_id: str, returncode: int | None, summar
         "validation_passed": summary.get("validation_passed"),
         "evaluator_passed": evaluation.get("passed"),
         "review_status": (summary.get("review") or {}).get("status"),
+        "first_pass_passed": summary.get("first_pass_passed"),
+        "repair_attempted": bool(repair), "repair_outcome": repair.get("status"),
+        "repair_episode_turns": repair.get("repair_episode_turns", 0),
+        "extension_turns_used": repair.get("extension_turns_used", 0),
+        "initial_finding_ids": repair.get("initial_finding_ids", []),
+        "final_finding_ids": repair.get("final_finding_ids", []),
     }
+
+
+def load_run_summary(run_dir: Path, returncode: int | None) -> dict:
+    try:
+        return json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    # Preserve interruption evidence without inventing a terminal repair outcome.
+    try:
+        summary = json.loads((run_dir / "progress.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        summary = {}
+    repair_file = run_dir / "repair.json"
+    if repair_file.exists():
+        try:
+            summary["repair_episode"] = json.loads(repair_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    summary.update(status="timed_out" if returncode is None else "missing_summary",
+                   summary="run timed out; last durable checkpoint preserved" if returncode is None else "run produced no summary")
+    return summary
 
 
 def main() -> int:
@@ -70,11 +98,7 @@ def main() -> int:
                 returncode = completed.returncode
             except subprocess.TimeoutExpired:
                 returncode = None
-            summary_file = RUNS / run_id / "summary.json"
-            try:
-                summary = json.loads(summary_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                summary = {"status": "timed_out" if returncode is None else "missing_summary", "summary": "run timed out" if returncode is None else "run produced no summary"}
+            summary = load_run_summary(RUNS / run_id, returncode)
             row = summarize(task, level, run_id, returncode, summary)
             records.append(row)
             output.write_text(json.dumps({"batch_id": batch_id, "model": "local", "results": records}, indent=2), encoding="utf-8")

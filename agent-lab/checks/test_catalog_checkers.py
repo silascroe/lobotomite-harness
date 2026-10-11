@@ -3,6 +3,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import io
+from contextlib import redirect_stdout
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -22,6 +25,25 @@ def grade(name, files):
 
 
 class CatalogCheckersTest(unittest.TestCase):
+    def test_missing_node_is_infrastructure_not_model_repair(self):
+        import check_mini_project
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.js").write_text("console.log('ok');")
+            output = io.StringIO()
+            with patch.object(sys, "argv", ["checker", str(root)]), redirect_stdout(output), \
+                    patch.object(check_mini_project.subprocess, "run", side_effect=OSError("Node unavailable")):
+                self.assertEqual(check_mini_project.main(), 1)
+            report = json.loads(output.getvalue())
+            finding = next(item for item in report["findings"] if item["id"] == "script_syntax")
+            self.assertEqual(finding["kind"], "infrastructure")
+
+    def test_mini_project_failures_have_actionable_artifact_hints(self):
+        _, report = grade("check_mini_project.py", {})
+        findings = {item["id"]: item for item in report["findings"]}
+        self.assertEqual(findings["focus_style"]["artifacts"], ["styles.css"])
+        self.assertIn("keyboard", findings["focus_style"]["message"])
+        self.assertEqual(findings["semantic_main"]["artifacts"], ["index.html"])
     def test_roundtrip_rejects_missing_export(self):
         files = {
             "agent-check.md": "# Agent check\n\nPurpose: test file round trip.\n\n- [ ] Inspect\n- [ ] Write\n- [ ] Validate\n",

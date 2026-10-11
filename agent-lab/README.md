@@ -1,6 +1,6 @@
 # Local agent lab
 
-This is the first harness around the local Qwen server. It gives the model a task, a managed or user-selected project directory, a small allowlisted tool set, and a turn limit. Every model response and tool result is written to the run directory as JSONL, so we can inspect what actually happened instead of trusting the model's victory speech.
+Agent Lab is a local-first workbench for interactive chats and evaluated project runs with small language models. The Python harness gives the model a managed or user-selected project directory, a bounded action catalog, workflow gates, and a turn limit. Local GGUF inference through llama.cpp is the default; an optional OpenAI-compatible provider uses the same harness controls. Model responses, tool results, and workflow events are recorded so runs can be inspected rather than judged by the model's victory speech.
 
 There is also a small desk console for launching and inspecting runs:
 
@@ -89,7 +89,7 @@ The web console's Starting point selector now includes four built-in runs:
 
 The selector shows each preset's purpose before launch. Its completion gates come from `agent-lab/tasks/catalog.json`; all four presets now have independent checkers outside the generated project. The mini-project checker is a structural smoke test, not a visual-quality grade. Direct CLI `-TaskFile` runs retain the configured default gates unless `-NoGates` is supplied. To compare the presets across Gemma reasoning levels sequentially on one local server, run `python agent-lab/benchmarks/catalog_matrix.py`; it writes an incremental JSON report under `agent-lab/benchmarks/results/` after each run. The runner does not automatically resume an interrupted batch.
 
-The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `output.log`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config.
+The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `output.log`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config. Evaluator-rejected runs additionally keep their repair episode in `repair.json`.
 
 To inspect the model's returned text from PowerShell, use the run ID shown in Agent Lab:
 
@@ -158,6 +158,16 @@ The Run dialog shows the selected skills and lets you enable project-local skill
 
 Evaluated runs use the workflow gates by default. A successful finish must have observable evidence for inspect, plan, implement, verify, and review. Inspection comes from successful reads/listing, implementation from writes or patches, verification from a successful validation command after a mutation, and review from a fresh `git_diff` after the latest mutation. If the external evaluator rejects a finish, the repair message names failed checks instead of dumping the whole report. Interactive chats and explicitly ungated custom runs remain flexible; use `--no-gates` only when the task is intentionally outside benchmark evaluation.
 
+### Evaluator-guided run repair
+
+When a run requests success after satisfying its workflow, file, validation and review gates, a valid failed evaluator report starts one repair episode. Checker findings give the model requirement IDs, bounded descriptions and relative artifact hints. They are untrusted data, not instructions or new permissions. The model must make its own edits and earn fresh validation, review and evaluator evidence.
+
+The normal turn budget remains unchanged. An active episode may use up to six additional model calls; `max_repair_turns` may lower that allowance but cannot raise it above six. Unchanged findings against an unchanged project stop as `no_progress`. Protocol/tool failures still use the existing generic recovery limits. Invalid reports, contradictory grades, checker crashes/timeouts and infrastructure findings end as errors, never as repair opportunities.
+
+The allowance is reserved durably before each extra request. `repair.json` survives interruptions and explicit resumes; a resumed run gets the existing fresh normal budget, but never replenishes its six-call repair extension. Damaged or missing episode snapshots produce explicit resume errors. The activity feed and Details Inspector expose the episode outcome, initial/remaining findings and turn usage. Chats are unchanged.
+
+Matrix reports retain final `passed` and separately record `first_pass_passed` (null if no valid evaluation occurred), `repair_attempted`, `repair_outcome`, `repair_episode_turns`, `extension_turns_used`, and initial/final finding IDs. A repaired pass is not a first-pass pass.
+
 ### Restart-safe conversations
 
 The UI server rehydrates persisted conversations at startup from each session's `session.json`, `transcript.json`, `workflow.json`, `config.json`, and workspace metadata. The conversation list therefore survives closing or restarting the PowerShell process. A session that was marked busy when the process disappeared is reopened with `busy: false`; a completed session is ready to continue, while an in-flight turn is explicitly marked interrupted for recovery. No dead worker is assumed to still exist. The transcript is restored as model context, while the shorter conversation record drives the visible chat. Malformed session records are skipped so one damaged folder cannot prevent the console from starting.
@@ -187,14 +197,30 @@ Interrupted benchmark runs are resumable. Each run keeps an immutable `initial-p
 The console exposes `Stop run` while a benchmark is active and `Resume run` when an interrupted record is selected. Stopping terminates the harness worker without deleting the project or audit trail. Resuming gives the worker a fresh configured turn budget while preserving the existing project and audit trail; terminal records are intentionally not restartable.
 
 ```powershell
-$py = 'C:\Users\ringd\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+$py = Join-Path $env:USERPROFILE '.codex\tools\python\bin\python3.14.exe'
+if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
 & $py agent-lab/checks/check_static_page.py agent-lab/runs/run-001/project
 ```
 
-The harness has its own small unit-test set:
+Run all Python unit-test groups and the browser UI contract checks together:
 
 ```powershell
-& $py -m unittest discover -s agent-lab/harness -p 'test_*.py'
+$py = Join-Path $env:USERPROFILE '.codex\tools\python\bin\python3.14.exe'
+if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
+
+foreach ($area in @('harness', 'checks', 'ui', 'benchmarks')) {
+    & $py -m unittest discover -s "agent-lab/$area" -p 'test_*.py'
+    if ($LASTEXITCODE -ne 0) { throw "Python tests failed in agent-lab/$area" }
+}
+
+$node = Join-Path $env:USERPROFILE '.codex\tools\node\node-v24.21.0-win-x64\node.exe'
+if (-not (Test-Path -LiteralPath $node)) { $node = 'node' }
+& $node agent-lab/ui/test_ui_contract.mjs
+if ($LASTEXITCODE -ne 0) { throw 'UI contract tests failed' }
+& $node --check agent-lab/ui/app.js
+if ($LASTEXITCODE -ne 0) { throw 'UI syntax check failed' }
 ```
 
-This version is confined by careful path checks and command restrictions, not by a real operating-system sandbox. It is suitable for controlled experiments in fresh run folders. It is not a license to point an 8B model at your documents, credentials, or main projects.
+This exercises the harness, checker, UI-server, benchmark, and browser contract suites. It does not start a model server or run the slower Gemma matrix.
+
+Path checks and command restrictions reduce risk but do not provide operating-system isolation. Use disposable projects for early tests; attach an existing project only deliberately, keep credentials outside model-visible folders, and use Git or another backup for work you care about.

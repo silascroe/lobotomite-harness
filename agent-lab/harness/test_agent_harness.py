@@ -1222,6 +1222,167 @@ stale context from an older read
         harness.call_model = call_model
         return harness
 
+    def test_evaluator_repair_uses_extension_and_passes(self):
+        finish = json.dumps({"action": "finish", "args": {"status": "success"}})
+        write = json.dumps({"action": "write_file", "args": {"path": "fixed.txt", "content": "fixed"}})
+        harness = self._fake_run_harness([finish, write, finish])
+        harness.config["max_turns"] = 1
+        harness.run_evaluator = lambda: {
+            "configured": True, "passed": (harness.project_dir / "fixed.txt").exists(),
+            "stdout": json.dumps({"passed": (harness.project_dir / "fixed.txt").exists(),
+                                   "checks": {"fixed": (harness.project_dir / "fixed.txt").exists()}})}
+        self.assertEqual(harness.run(), 0)
+        self.assertEqual(harness.repair.state["status"], "passed")
+        self.assertEqual(harness.repair.state["extension_turns_used"], 2)
+        self.assertFalse(MODULE.load_json(harness.run_dir / "summary.json")["first_pass_passed"])
+        self.assertEqual(MODULE.load_json(harness.run_dir / "repair.json"), harness.repair.snapshot())
+
+    def test_evaluator_no_progress_bypasses_generic_retry(self):
+        finish = json.dumps({"action": "finish", "args": {"status": "success"}})
+        harness = self._fake_run_harness([finish, finish])
+        harness.run_evaluator = lambda: {"configured": True, "passed": False,
+                                         "stdout": '{"passed":false,"checks":{"fixed":false}}'}
+        self.assertEqual(harness.run(), 2)
+        self.assertEqual(harness.repair.state["status"], "no_progress")
+        self.assertEqual(harness.model_calls, 2)
+        self.assertNotIn("recovery_exhausted", (harness.run_dir / "events.jsonl").read_text())
+
+    def test_evaluator_error_does_not_start_repair(self):
+        finish = json.dumps({"action": "finish", "args": {"status": "success"}})
+        harness = self._fake_run_harness([finish])
+        harness.run_evaluator = lambda: {"configured": True, "passed": False, "stdout": "bad json"}
+        with self.assertRaises(ValueError):
+            harness.run()
+        self.assertEqual(harness.status, "error")
+        self.assertIsNone(harness.repair.state)
+
+    def test_repair_extension_is_hard_capped(self):
+        action = lambda name, args: json.dumps({"action": name, "args": args})
+        responses = [action("finish", {"status": "success"})] + [
+            action("write_file", {"path": "attempt.txt", "content": str(i)}) for i in range(8)]
+        harness = self._fake_run_harness(responses)
+        harness.config.update(max_turns=1, max_repair_turns=100)
+        harness.run_evaluator = lambda: {"configured": True, "passed": False,
+                                         "stdout": '{"passed":false,"checks":{"fixed":false}}'}
+        self.assertEqual(harness.run(), 2)
+        self.assertEqual(harness.model_calls, 7)
+        self.assertEqual(harness.repair.state["extension_turns_used"], 6)
+        self.assertEqual(harness.repair.state["status"], "budget_exhausted")
+
+    def test_repair_resumes_without_replenishing_extension(self):
+        harness = self._fake_run_harness([])
+        harness.prepare()
+        harness.repair.recheck({"passed": False, "findings": [
+            {"id": "fixed", "message": "Fix it", "artifacts": []}]}, MODULE.fingerprint({}), 1)
+        for _ in range(5):
+            harness.repair.reserve_turn(True)
+        harness.persist_repair()
+        harness.save_transcript()
+        harness.save_progress(turn=6, checkpoint="evaluator_repair")
+        harness.release_workspace_lease()
+        restored = MODULE.AgentHarness.resume_from_run(harness.run_dir)
+        self.assertEqual(restored.repair.remaining, 1)
+        self.assertFalse(restored.first_pass_passed)
+        restored.release_workspace_lease()
+        MODULE.write_json(harness.run_dir / "repair.json", {"schema_version": 1})
+        with self.assertRaisesRegex(MODULE.HarnessError, "cannot resume repair"):
+            MODULE.AgentHarness.resume_from_run(harness.run_dir)
+
+    def test_resume_spent_extension_keeps_only_fresh_normal_budget(self):
+        harness = self._fake_run_harness([])
+        harness.config["max_turns"] = 1
+        harness.prepare()
+        harness.repair.recheck({"passed": False, "findings": [
+            {"id": "fixed", "message": "Fix it", "artifacts": []}]}, MODULE.fingerprint({}), 1)
+        for _ in range(6):
+            harness.repair.reserve_turn(True)
+        harness.persist_repair()
+        harness.save_transcript()
+        harness.save_progress(turn=7, checkpoint="evaluator_repair")
+        harness.release_workspace_lease()
+        restored = MODULE.AgentHarness.resume_from_run(harness.run_dir)
+        def call_model():
+            restored.model_calls += 1
+            return {"content": '{"action":"write_file","args":{"path":"attempt.txt","content":"change"}}'}
+        restored.call_model = call_model
+        self.assertEqual(restored.run(resume=True), 2)
+        self.assertEqual(restored.model_calls, 1)
+        self.assertEqual(restored.repair.state["extension_turns_used"], 6)
+        self.assertEqual(restored.repair.state["status"], "budget_exhausted")
+
+    def test_repair_mutation_still_requires_operator_approval(self):
+        harness = self._fake_run_harness(['{"action":"finish","args":{}}',
+                                         '{"action":"write_file","args":{"path":"fixed.txt","content":"change"}}'])
+        harness.config["approval_mode"] = "confirm"
+        harness.approval_mode = "confirm"
+        harness.run_evaluator = lambda: {"configured": True, "passed": False,
+                                         "stdout": '{"passed":false,"checks":{"fixed":false}}'}
+        self.assertEqual(harness.run(), 3)
+        self.assertTrue(harness.repair.active)
+        self.assertFalse((harness.project_dir / "fixed.txt").exists())
+        harness.release_workspace_lease()
+
+    def test_repaired_edits_need_fresh_validation_and_review(self):
+        action = lambda name, args: json.dumps({"action": name, "args": args})
+        responses = [action("list_files", {"path": "."}),
+                     action("workflow_checkpoint", {"phase": "plan", "summary": "Write and validate."}),
+                     action("write_file", {"path": "fixed.txt", "content": "bad"}),
+                     action("run_command", {"command": "cmd /c exit 0"}),
+                     action("git_diff", {}), action("finish", {"status": "success"}),
+                     action("write_file", {"path": "fixed.txt", "content": "fixed"}),
+                     action("finish", {"status": "success"}),
+                     action("run_command", {"command": "cmd /c exit 0"}),
+                     action("git_diff", {}), action("finish", {"status": "success"})]
+        harness = self._fake_run_harness(responses, gated=True)
+        harness.config.update(max_turns=6, require_validation=True, allow_commands=["cmd"])
+        evaluations = []
+        def evaluate():
+            passed = (harness.project_dir / "fixed.txt").read_text() == "fixed"
+            evaluations.append(passed)
+            return {"configured": True, "passed": passed,
+                    "stdout": json.dumps({"passed": passed, "checks": {"fixed": passed}})}
+        harness.run_evaluator = evaluate
+        self.assertEqual(harness.run(), 0)
+        self.assertEqual(evaluations, [False, True])
+        self.assertEqual(harness.repair.state["extension_turns_used"], 5)
+        self.assertTrue(harness.validation_passed)
+        self.assertFalse(harness.missing_workflow_gates())
+
+    def test_infrastructure_failure_finalizes_active_episode(self):
+        action = lambda name, args: json.dumps({"action": name, "args": args})
+        harness = self._fake_run_harness([action("finish", {}),
+                                         action("write_file", {"path": "attempt.txt", "content": "change"}),
+                                         action("finish", {})])
+        reports = iter(['{"passed":false,"checks":{"fixed":false}}', 'not json'])
+        harness.run_evaluator = lambda: {"configured": True, "passed": False, "stdout": next(reports)}
+        with self.assertRaises(ValueError):
+            harness.run()
+        self.assertEqual(harness.status, "error")
+        self.assertEqual(harness.repair.state["status"], "blocked")
+
+    def test_evaluator_timeout_has_no_repair_allowance(self):
+        self.harness.config["evaluator"] = "agent-lab/checks/check_static_page.py"
+        with patch.object(MODULE.subprocess, "run", side_effect=MODULE.subprocess.TimeoutExpired("checker", 1)):
+            with self.assertRaisesRegex(MODULE.HarnessError, "external evaluator error"):
+                self.harness.finish_issue({"status": "success"})
+        self.assertIsNone(self.harness.repair.state)
+        self.assertIsNone(self.harness.first_pass_passed)
+
+    def test_first_pass_success_does_not_create_episode(self):
+        harness = self._fake_run_harness(['{"action":"finish","args":{}}'])
+        harness.run_evaluator = lambda: {"configured": True, "passed": True, "stdout": '{"passed":true}'}
+        self.assertEqual(harness.run(), 0)
+        self.assertTrue(harness.first_pass_passed)
+        self.assertIsNone(harness.repair.state)
+        self.assertFalse((harness.run_dir / "repair.json").exists())
+
+    def test_protocol_failure_inside_episode_still_uses_generic_stop(self):
+        harness = self._fake_run_harness(['{"action":"finish","args":{}}', 'not json', 'not json'])
+        harness.run_evaluator = lambda: {"configured": True, "passed": False, "stdout": '{"passed":false}'}
+        self.assertEqual(harness.run(), 2)
+        self.assertEqual(harness.repair.state["status"], "blocked")
+        self.assertIn("invalid_model_action", harness.repair.state["outcome"])
+
     def test_repeated_invalid_model_output_blocks_after_one_repair(self) -> None:
         harness = self._fake_run_harness(["not json", "not json", "not json"])
 

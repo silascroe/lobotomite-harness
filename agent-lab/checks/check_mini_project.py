@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from finding_messages import findings_for
 
 
 def main() -> int:
@@ -27,13 +28,15 @@ def main() -> int:
     checks["focus_style"] = bool(re.search(r":focus(?:-visible)?\b", css))
     checks["click_handler"] = bool(re.search(r"addEventListener\s*\(\s*['\"]click", js))
     checks["updates_status"] = bool(re.search(r"(?:textContent|innerText|innerHTML|setAttribute)\s*(?:=|\()", js)) and bool(re.search(r"(?:getElementById|querySelector)\s*\(", js))
+    infrastructure = []
     try:
         checks["script_syntax"] = files["app.js"].is_file() and subprocess.run(
             ["node", "--check", str(files["app.js"])], capture_output=True, timeout=5, check=False
         ).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         checks["script_syntax"] = False
-    result = {"passed": all(checks.values()), "checks": checks}
+        infrastructure.append("script_syntax")
+    result = {"passed": all(checks.values()), "checks": checks, "findings": findings_for(checks, infrastructure)}
     print(json.dumps(result))
     return 0 if result["passed"] else 1
 

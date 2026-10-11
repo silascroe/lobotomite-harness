@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#151713">
+  <meta name="description" content="A static, phone-friendly visual preview of the Agent Lab local-model harness.">
+  <title>Agent Lab — visual preview</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="assets/agent-lab.css">
+  <link rel="stylesheet" href="assets/preview.css">
+  <script src="preview.js" defer></script>
+</head>
+<body class="preview-body">
+  <a class="preview-skip-link" href="#previewMain">Skip to the preview</a>
+  <div class="preview-shell">
+    <header class="preview-topbar">
+      <a class="brand preview-brand" href="./" aria-label="Agent Lab visual preview home">
+        <span class="brand-mark" aria-hidden="true">AL</span>
+        <span class="brand-name">Agent Lab</span>
+      </a>
+
+      <div class="preview-project" aria-label="Example workspace">
+        <span class="project-signal" aria-hidden="true"></span>
+        <span><strong>Scratch workspace</strong><small>Temporary folder</small></span>
+      </div>
+
+      <div class="preview-topbar-actions" aria-label="Example settings">
+        <span class="preview-setting"><small>Reasoning</small><strong>Standard</strong></span>
+        <span class="preview-setting"><small>Tools</small><strong>Auto</strong></span>
+        <span class="status-badge preview-status"><span class="status-dot" aria-hidden="true"></span><span>Preview</span></span>
+        <button id="inspectorToggle" class="header-button preview-details-button" type="button" aria-controls="previewInspector" aria-expanded="false">
+          <span class="button-glyph" aria-hidden="true">≡</span><span>Details</span>
+        </button>
+      </div>
+    </header>
+
+    <aside class="preview-notice" aria-label="Preview limitations">
+      <span class="preview-notice-label">STATIC PREVIEW</span>
+      <p>This is a visual demo with invented sample content. No model is connected, nothing is sent, and it cannot access your computer.</p>
+    </aside>
+
+    <div id="previewLayout" class="preview-layout">
+      <aside class="preview-sidebar" aria-label="Example workspace navigation">
+        <div class="preview-workspace-card">
+          <small>SCRATCH</small>
+          <strong><span class="project-signal" aria-hidden="true"></span>Scratch workspace</strong>
+          <span>Temporary folder</span>
+        </div>
+
+        <div class="mode-switcher preview-mode-switcher" role="tablist" aria-label="Preview surface">
+          <button id="runsTab" class="mode-button" type="button" role="tab" aria-selected="true" aria-controls="runNavigation runView" tabindex="0" data-preview-mode="runs">Runs</button>
+          <button id="chatsTab" class="mode-button" type="button" role="tab" aria-selected="false" aria-controls="chatNavigation chatView" tabindex="-1" data-preview-mode="chats">Chats</button>
+        </div>
+
+        <section id="runNavigation" class="preview-nav-section" aria-label="Example runs">
+          <div class="preview-nav-heading"><span>RECENT RUNS</span><small>EXAMPLES</small></div>
+          <div class="record-list preview-record-list">
+            <div class="run-item active" aria-current="page">
+              <div class="run-item-name">Field-notes one-pager</div>
+              <div class="run-item-meta"><span class="run-item-status">sample</span><span>4 steps</span></div>
+            </div>
+            <div class="run-item">
+              <div class="run-item-name">File round-trip</div>
+              <div class="run-item-meta"><span class="run-item-status">sample</span><span>3 steps</span></div>
+            </div>
+            <div class="run-item">
+              <div class="run-item-name">Structured validation</div>
+              <div class="run-item-meta"><span class="run-item-status">sample</span><span>5 steps</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="chatNavigation" class="preview-nav-section" aria-label="Example chats" hidden>
+          <div class="preview-nav-heading"><span>RECENT CHATS</span><small>EXAMPLES</small></div>
+          <div class="record-list preview-record-list">
+            <div class="session-item active" aria-current="page">
+              <div class="session-item-name">Project setup</div>
+              <div class="session-item-meta">sample conversation</div>
+            </div>
+            <div class="session-item">
+              <div class="session-item-name">How runs work</div>
+              <div class="session-item-meta">sample conversation</div>
+            </div>
+          </div>
+        </section>
+
+        <footer class="preview-sidebar-footer"><span class="connection-dot" aria-hidden="true"></span>Offline mockup</footer>
+      </aside>
+
+      <main id="previewMain" class="preview-main">
+        <section id="runView" class="preview-view" aria-labelledby="runTitle">
+          <header class="record-header preview-record-header">
+            <div class="record-heading-copy">
+              <p class="record-context">EXAMPLE RUN · SCRATCH WORKSPACE</p>
+              <h1 id="runTitle">Build a field-notes page</h1>
+              <p>A small sample task, with the important steps made visible instead of buried in a log.</p>
+            </div>
+            <div class="record-state">Example only</div>
+          </header>
+
+          <section class="run-activity-panel preview-activity" aria-labelledby="activityHeading">
+            <header class="run-activity-header">
+              <div>
+                <p class="run-activity-kicker">SAMPLE TRACE</p>
+                <h2 id="activityHeading">The work, in view</h2>
+                <p>Short summaries of model updates, tool actions, and verification. This trace is illustrative—not a real run.</p>
+              </div>
+              <div class="run-activity-meta">
+                <span class="run-activity-state complete">Example complete</span>
+                <small>4 sample steps</small>
+              </div>
+            </header>
+
+            <div class="run-activity-now" role="note">
+              <span class="run-activity-now-label">EXAMPLE</span>
+              <div class="run-activity-now-content">
+                <strong>Static checks passed</strong>
+                <span class="run-activity-now-copy">A real run would show only evidence recorded by the harness here.</span>
+              </div>
+            </div>
+
+            <div class="run-activity-timeline">
+              <div class="run-activity-feed">
+                <article class="run-activity-item success">
+                  <div class="run-activity-item-icon" aria-hidden="true">1</div>
+                  <div class="run-activity-item-body">
+                    <div class="run-activity-item-head"><span class="run-activity-item-label">Request</span><time>Example</time></div>
+                    <div class="run-activity-item-title"><strong>Task and workspace recorded</strong></div>
+                    <p class="run-activity-item-copy">Create a one-page outdoor journal with a clear title, a place for observations, and a readable phone layout.</p>
+                  </div>
+                </article>
+
+                <article class="run-activity-item success">
+                  <div class="run-activity-item-icon" aria-hidden="true">2</div>
+                  <div class="run-activity-item-body">
+                    <div class="run-activity-item-head"><span class="run-activity-item-label">Agent update</span><time>Example</time></div>
+                    <div class="run-activity-item-title"><strong>Plan the smallest useful page</strong></div>
+                    <p class="run-activity-item-copy">Start with the journal structure and entry form, then check that the page remains usable at a narrow viewport.</p>
+                  </div>
+                </article>
+
+                <article class="run-activity-item tool">
+                  <div class="run-activity-item-icon" aria-hidden="true">↗</div>
+                  <div class="run-activity-item-body">
+                    <div class="run-activity-item-head"><span class="run-activity-item-label">Tool action</span><code>write_file · index.html</code><time>Example</time></div>
+                    <div class="run-activity-item-title"><strong>Created the page in the project folder</strong><span class="run-activity-item-status">Done</span></div>
+                    <p class="run-activity-item-copy">The harness records the requested action and its result; this preview does not create a file.</p>
+                  </div>
+                </article>
+
+                <article class="run-activity-item success">
+                  <div class="run-activity-item-icon" aria-hidden="true">✓</div>
+                  <div class="run-activity-item-body">
+                    <div class="run-activity-item-head"><span class="run-activity-item-label">Verification</span><time>Example</time></div>
+                    <div class="run-activity-item-title"><strong>Independent task check completed</strong></div>
+                    <p class="run-activity-item-copy">In the real harness, an evaluator—not the model—decides whether its required checks passed.</p>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <footer class="run-activity-footer"><span>Illustrative interface content · no model call occurred</span><span>Details show the example record</span></footer>
+          </section>
+
+          <footer class="preview-main-footer">
+            <span>Agent Lab is a local-first harness for testing bounded agent work.</span>
+            <a href="https://github.com/silascroe/lobotomite-harness">Browse the source</a>
+          </footer>
+        </section>
+
+        <section id="chatView" class="preview-view" aria-labelledby="chatTitle" hidden>
+          <header class="record-header preview-record-header">
+            <div class="record-heading-copy">
+              <p class="record-context">EXAMPLE CHAT · SCRATCH WORKSPACE</p>
+              <h1 id="chatTitle">Local conversation</h1>
+              <p>A static example of the chat surface. Messages below are made up for this preview.</p>
+            </div>
+            <div class="record-state">Example only</div>
+          </header>
+
+          <div class="preview-chat-thread">
+            <article class="chat-message user">
+              <div class="avatar user" aria-hidden="true">Y</div>
+              <div class="chat-message-body">
+                <div class="chat-message-meta"><span class="chat-role">You</span><time class="chat-time">Example</time></div>
+                <div class="chat-bubble"><div class="chat-content">What does the harness add around a small model?</div></div>
+              </div>
+            </article>
+            <article class="chat-message">
+              <div class="avatar assistant" aria-hidden="true">A</div>
+              <div class="chat-message-body">
+                <div class="chat-message-meta"><span class="chat-role">Agent Lab</span><time class="chat-time">Example</time></div>
+                <div class="chat-bubble"><div class="chat-content">A project folder, a bounded tool set, workflow checkpoints, approvals, saved records, and independent checks. The model still does the thinking—and still gets things wrong.</div></div>
+              </div>
+            </article>
+          </div>
+
+          <div class="preview-composer-wrap">
+            <section class="chat-composer preview-composer" aria-label="Disabled example message composer">
+              <textarea rows="2" placeholder="The static preview cannot send messages." disabled></textarea>
+              <div class="composer-footer">
+                <div class="composer-target"><span class="project-signal" aria-hidden="true"></span><span>Example only</span></div>
+                <span class="composer-note">Read-only</span>
+                <button class="primary-button send-button" type="button" disabled>Send</button>
+              </div>
+            </section>
+            <p class="preview-composer-note">This is a picture of the interface, not a connection to your local model.</p>
+          </div>
+        </section>
+      </main>
+
+      <aside id="previewInspector" class="preview-inspector" aria-labelledby="inspectorTitle" hidden>
+        <header class="preview-inspector-header">
+          <div><p>EXAMPLE RECORD</p><h2 id="inspectorTitle">Details</h2></div>
+          <button id="inspectorClose" class="icon-button preview-inspector-close" type="button" aria-label="Close details">×</button>
+        </header>
+
+        <div class="details-tabs preview-inspector-tabs" role="tablist" aria-label="Example detail sections">
+          <span class="details-tab active" role="tab" aria-selected="true">Overview</span>
+          <span class="details-tab" role="tab" aria-selected="false">Workflow</span>
+          <span class="details-tab" role="tab" aria-selected="false">Files</span>
+        </div>
+
+        <div class="preview-inspector-content">
+          <section aria-labelledby="overviewTitle">
+            <div class="panel-caption"><span id="overviewTitle">Overview</span><small>STATIC SAMPLE</small></div>
+            <div class="detail-list">
+              <div class="detail-row"><span class="detail-label">Workspace</span><span class="detail-value">Scratch workspace</span></div>
+              <div class="detail-row"><span class="detail-label">Provider</span><span class="detail-value">Not connected</span></div>
+              <div class="detail-row"><span class="detail-label">Run status</span><span class="detail-value muted-value">Illustration only</span></div>
+              <div class="detail-row"><span class="detail-label">Artifacts</span><span class="detail-value">No files created</span></div>
+            </div>
+          </section>
+
+          <section class="preview-inspector-section" aria-labelledby="workflowTitle">
+            <div class="panel-caption"><span id="workflowTitle">Workflow</span><small>EXAMPLE</small></div>
+            <div class="workflow-steps" aria-label="Illustrative workflow phases">
+              <div class="workflow-step complete"><span class="workflow-step-index">01</span><span class="workflow-step-label">Understand</span></div>
+              <div class="workflow-step complete"><span class="workflow-step-index">02</span><span class="workflow-step-label">Plan</span></div>
+              <div class="workflow-step complete"><span class="workflow-step-index">03</span><span class="workflow-step-label">Build</span></div>
+              <div class="workflow-step complete"><span class="workflow-step-index">04</span><span class="workflow-step-label">Verify</span></div>
+            </div>
+          </section>
+
+          <section class="preview-inspector-section" aria-labelledby="filesTitle">
+            <div class="panel-caption"><span id="filesTitle">Files</span><small>0 ARTIFACTS</small></div>
+            <p class="preview-inspector-copy">The sample mentions a file action, but this page has not written anything to disk.</p>
+          </section>
+
+          <details class="raw-output-disclosure">
+            <summary>Why this is static</summary>
+            <p class="preview-inspector-copy">GitHub Pages serves these HTML, CSS, and JavaScript files. It does not host the local model server or the Agent Lab API.</p>
+          </details>
+        </div>
+      </aside>
+    </div>
+  </div>
+</body>
+</html>
