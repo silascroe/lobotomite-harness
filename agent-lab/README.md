@@ -8,7 +8,11 @@ There is also a small desk console for launching and inspecting runs:
 .\scripts\start-agent-lab-ui.ps1
 ```
 
-Open [http://127.0.0.1:8787](http://127.0.0.1:8787). It is bound to loopback only. The console can launch benchmark tasks with their evaluator, or custom tasks with the benchmark gates switched off, and it shows progress plus generated-file previews.
+Open [http://127.0.0.1:8787](http://127.0.0.1:8787). It is bound to loopback only, and it also refuses requests whose `Host` or `Origin` header is not `127.0.0.1`, `localhost` or `[::1]` on that port, plus any POST that is not `application/json`. That blocks web pages from driving the console (cross-site requests, DNS rebinding) and means a Cloudflare-style tunnel will get `403`; that is deliberate, because anyone who can reach this API can start a model that writes and runs code on this machine. Remote access needs an authenticated layer in front, not a hole in this check. The console can launch benchmark tasks with their evaluator, or custom tasks with the benchmark gates switched off.
+
+The console is an observation view rather than a log viewer. A run page leads with the evaluator's verdict and first-pass versus repaired outcome; a live headline and activity feed narrate each tool call as it happens ("Reading `styles.css`" becomes "Read `styles.css`"); evaluator checks flip as each evaluation lands; and an animated specimen shows the agent's state (thinking, using a tool, waiting, passed, failed). The model's own finish summary is shown last and labelled unverified. Any recorded run can be replayed at 1×, 4× or 16× from its complete event log. Chats show the same narration live and fold each reply's tool work into a "Worked through N steps" disclosure. The Details drawer holds the inspector, project files, the review diff, raw events (without model reasoning) and process output.
+
+The UI is plain ES modules served by `server.py` with no build step: `narration.js` turns harness events into what the console shows and is shared by live view, replay, chats and the showcase; `source.js` talks either to the local API or to recorded showcase files; `specimen.js` draws the animated cell; `app.js` holds the views. Fonts are local Windows faces, so the console works offline.
 
 ### Real project workspaces
 
@@ -66,7 +70,7 @@ The current tools are:
 - `write_file`
 - `delete_file` (moves the original into the run record before removing it from the project)
 - `replace_text` (exact, bounded text replacement with a required match count)
-- `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header, tolerate omitted context prefixes and an omitted final end marker from small models, allow addition-only hunks to use their declared line anchor, and validate every file before the batch is written)
+- `apply_patch` (a small supported subset of the familiar patch format; update hunks require an explicit file header, tolerate omitted context prefixes and an omitted opening or final marker (when the patch starts directly at a valid file header) from small models, allow addition-only hunks to use their declared line anchor, and validate every file before the batch is written)
 - `run_command` (no shell; Python, Node, and `npm test` are allowlisted by config)
 - `git_diff` (a diff against the run's initial files)
 - `workflow_checkpoint` (an observable phase, summary, next action, and artifact list)
@@ -110,7 +114,7 @@ The launcher keeps E4B as its default for backwards compatibility and reports th
 
 The harness also exposes a model-aware reasoning selector: `off`, `low`, `standard`, `deep`, and `max`. The Agent Lab console applies the selected level to the next interactive message and to newly launched runs. Levels are translated into per-request thinking budgets and output caps; Gemma uses `enable_thinking` plus `reasoning_budget_tokens`, while Qwen also receives its `/think` or `/no_think` template marker. The selector is an abstraction, not a promise that every model supports the same native reasoning semantics.
 
-For the local llama.cpp provider, `constrain_local_actions` enables schema-constrained JSON action envelopes. The schema locks the outer action envelope and action name to the harness catalog; the harness separately validates each tool's required/allowed argument fields and types before dispatch and gives malformed output one targeted repair attempt. The exact bundled llama.cpp 11045 server was smoke-tested with this response format. `action_output_tokens` is a minimum response ceiling for structured tool turns (default `2048`), independent of the reasoning budget, so `off` remains zero-reasoning while still leaving room for a file-writing action. Set `constrain_local_actions` to `false` only for a local endpoint that does not support it. Remote OpenAI-compatible requests do not receive the local-only response format or output reserve.
+For the local llama.cpp provider, `constrain_local_actions` enables schema-constrained JSON action envelopes. The schema is one variant per action with that action's exact argument fields, types and enum values, so grammar-constrained decoding cannot emit an unknown field (such as `expected_replacements` on `apply_patch`), drop a required field, or invent a workflow phase. The harness still validates every payload before dispatch, because the remote provider does not receive the schema, and gives malformed output one targeted repair attempt. The bundled llama.cpp b11045 server was smoke-tested with the per-action schema on 2026-10-11. `action_output_tokens` is a minimum response ceiling for structured tool turns (default `2048`), independent of the reasoning budget, so `off` remains zero-reasoning while still leaving room for a file-writing action. Set `constrain_local_actions` to `false` only for a local endpoint that does not support it. Remote OpenAI-compatible requests do not receive the local-only response format or output reserve.
 
 ### Optional API provider
 
@@ -132,7 +136,7 @@ Agent Lab has a small workflow layer inspired by the useful operational parts of
 
 The current snapshot is written to the harness-owned `workflow.json` beside the run or chat transcript. The model can emit a `workflow_checkpoint` action with a short summary, next action, and relative artifact paths. Successful inspections, writes, validation commands, diffs, and finishes also create automatic evidence checkpoints. These summaries describe observable work only; they are not hidden chain-of-thought. The web console reads that same snapshot for the phase rail, Inspector, and Activity feed, so the UI is reporting the harness state rather than inventing a second status system.
 
-The harness accepts a late explicit `plan` checkpoint after automatic evidence has advanced the visible phase, but keeps the current phase and records a `workflow_late_evidence` event. That is deliberately honest about a small model recovering its process without making the state machine a paper shredder.
+The harness accepts a late explicit `plan` checkpoint after automatic evidence has advanced the visible phase (implement, verify or review), but keeps the current phase and records a `workflow_late_evidence` event. Repeating it is harmless; it used to raise a backward-transition error that ended finished runs before evaluation. That is deliberately honest about a small model recovering its process without making the state machine a paper shredder.
 
 ### Durable change review
 
@@ -164,7 +168,7 @@ When a run requests success after satisfying its workflow, file, validation and 
 
 The normal turn budget remains unchanged. An active episode may use up to six additional model calls; `max_repair_turns` may lower that allowance but cannot raise it above six. Unchanged findings against an unchanged project stop as `no_progress`. Protocol/tool failures still use the existing generic recovery limits. Invalid reports, contradictory grades, checker crashes/timeouts and infrastructure findings end as errors, never as repair opportunities.
 
-The allowance is reserved durably before each extra request. `repair.json` survives interruptions and explicit resumes; a resumed run gets the existing fresh normal budget, but never replenishes its six-call repair extension. Damaged or missing episode snapshots produce explicit resume errors. The activity feed and Details Inspector expose the episode outcome, initial/remaining findings and turn usage. Chats are unchanged.
+While an episode is open, every model request carries the last evaluation's findings appended to its latest message (request-only; the transcript is unchanged), because context compaction otherwise drops the single findings message within a few turns. The reminder ends with a status derived from the project fingerprint and fresh evidence (no edits yet, validate next, review next, or call finish now), since the findings list cannot change until finish runs the evaluator again; a static reminder made models repeat fixes that had already succeeded. The allowance is reserved durably before each extra request. `repair.json` survives interruptions and explicit resumes; a resumed run gets the existing fresh normal budget, but never replenishes its six-call repair extension. Damaged or missing episode snapshots produce explicit resume errors. The activity feed and Details Inspector expose the episode outcome, initial/remaining findings and turn usage. Chats are unchanged.
 
 Matrix reports retain final `passed` and separately record `first_pass_passed` (null if no valid evaluation occurred), `repair_attempted`, `repair_outcome`, `repair_episode_turns`, `extension_turns_used`, and initial/final finding IDs. A repaired pass is not a first-pass pass.
 
@@ -176,9 +180,9 @@ Interactive turns also have a durable job record. A turn that was running when t
 
 Tool calls also have a durable `tool-receipt.json` lifecycle. The harness records the exact action before dispatch, records the result immediately after dispatch, and settles the receipt only after the tool observation is safely in the transcript and progress snapshot. If a worker stops with a completed receipt, the result is replayed as an observation without dispatching the side effect again. If it stops while the receipt is still pending, the outcome is marked unknown and the next attempt is told to inspect the project before repeating anything. The public UI receives only a redacted receipt summary; exact arguments and results stay in the harness record.
 
-The control loop also has bounded recovery. The same malformed response, rejected finish, or tool failure gets one targeted repair opportunity; a second identical failure ends a benchmark as `blocked` with the concrete reason instead of burning the rest of the turn budget. Consecutive duplicate tool calls are stopped before the second dispatch. Patch-context failures give the model a specific recovery instruction to reread the current file and switch to exact replacement instead of replaying a stale hunk; missing required fields such as `args.path` get field-specific guidance. Interactive chats receive the same protection but remain usable after showing the recovery message. The policy is persisted in run summaries and chat session metadata under `recovery`, and its decisions are recorded as `recovery_retry`, `recovery_duplicate_action`, and `recovery_exhausted` events. These controls preserve the workflow gates; they do not manufacture missing evidence.
+The control loop also has bounded recovery. The same malformed response, rejected finish, or tool failure gets one targeted repair opportunity; a second identical failure ends a benchmark as `blocked` with the concrete reason instead of burning the rest of the turn budget. Consecutive duplicate tool calls are stopped before the second dispatch, and the refusal names the next workflow step from recorded evidence (validate, review with `git_diff`, finish, or edit the files in open evaluator findings). Patch-context failures give the model a specific recovery instruction to reread the current file and switch to exact replacement instead of replaying a stale hunk; missing required fields such as `args.path` get field-specific guidance. Interactive chats receive the same protection but remain usable after showing the recovery message. The policy is persisted in run summaries and chat session metadata under `recovery`, and its decisions are recorded as `recovery_retry`, `recovery_duplicate_action`, and `recovery_exhausted` events. These controls preserve the workflow gates; they do not manufacture missing evidence.
 
-Context windows are bounded independently from transcript durability. The full `transcript.json` remains available for rehydration, while each model request uses the configured `context_max_tokens` budget and keeps the system prompt plus the newest turns. Older observable turns are reduced to an inspectable operational summary; raw reasoning is never replayed into model context. If a run's provider returns a separate `reasoning_content` field, the run event log preserves it for manual inspection, but the harness does not infer or reconstruct reasoning when that field is absent. A `context_compacted` event and the current context metadata appear in the run summary, session Inspector, and activity feed, so a long task does not silently become a different conversation.
+Context windows are bounded independently from transcript durability. The full `transcript.json` remains available for rehydration, while each model request uses the configured `context_max_tokens` budget and keeps the system prompt plus the newest turns. Older observable turns are reduced to an inspectable operational summary; raw reasoning is never replayed into model context. If a run's provider returns a separate `reasoning_content` field, the run event log preserves it for manual inspection, but the harness does not infer or reconstruct reasoning when that field is absent. A `context_compacted` event and the current context metadata appear in the run summary, session Inspector, and activity feed, so a long task does not silently become a different conversation. For the local provider, `model_context_tokens` (default config `8192`, matching the launcher's `-c`) shrinks that budget so the prompt plus the request's `max_tokens` fit in llama.cpp's shared window, with a 1.2x margin for the character-based token estimate. Without it, Deep/Max turns could fill the window and be cut off mid-JSON; a cut-off reply now gets a specific instruction to send smaller content. If you raise the launcher's context size, raise `model_context_tokens` to match.
 
 Harness-owned JSON snapshots and project-file edits use same-directory atomic replacement. A stopped process can leave a hidden temporary file, but it cannot turn the active transcript, session record, workflow snapshot, or edited text file into half a JSON document or a truncated file.
 
@@ -215,12 +219,24 @@ foreach ($area in @('harness', 'checks', 'ui', 'benchmarks')) {
 
 $node = Join-Path $env:USERPROFILE '.codex\tools\node\node-v24.21.0-win-x64\node.exe'
 if (-not (Test-Path -LiteralPath $node)) { $node = 'node' }
-& $node agent-lab/ui/test_ui_contract.mjs
-if ($LASTEXITCODE -ne 0) { throw 'UI contract tests failed' }
-& $node --check agent-lab/ui/app.js
-if ($LASTEXITCODE -ne 0) { throw 'UI syntax check failed' }
+& $node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_narration.mjs
+if ($LASTEXITCODE -ne 0) { throw 'UI contract or narration tests failed' }
+foreach ($module in @('app.js', 'narration.js', 'source.js', 'specimen.js')) {
+    & $node --check "agent-lab/ui/$module"
+    if ($LASTEXITCODE -ne 0) { throw "UI syntax check failed: $module" }
+}
 ```
 
-This exercises the harness, checker, UI-server, benchmark, and browser contract suites. It does not start a model server or run the slower Gemma matrix.
+This exercises the harness, checker, UI-server, benchmark, console contract and narration suites. It does not start a model server or run the slower Gemma matrix.
+
+### Public showcase
+
+The GitHub Pages site is the same console in read-only showcase mode. To refresh its recordings, pick runs worth showing and export them:
+
+```powershell
+& $py scripts/export_showcase.py --run matrix-20261011-201925-004-off --chat chat-20261011-221823
+```
+
+With no arguments the script exports its curated default set. It reads run and chat records from disk without modifying them, replaces local paths, drops model reasoning and raw model output, clips long values, includes only small text project files, and refuses to write anything if a local path survives. Review `site/showcase/` before committing; only push recordings you are happy to make public. Opening the console on any non-loopback host, or with `?showcase`, uses the recordings instead of the API.
 
 Path checks and command restrictions reduce risk but do not provide operating-system isolation. Use disposable projects for early tests; attach an existing project only deliberately, keep credentials outside model-visible folders, and use Git or another backup for work you care about.

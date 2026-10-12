@@ -977,6 +977,97 @@ class ServerWorkflowTests(unittest.TestCase):
         self.assertEqual(restored, ["chat-discover"])
         self.assertIn("chat-discover", MODULE.SESSIONS)
 
+    def _raw_request(self, method: str, path: str, *, headers: dict[str, str], body: str | None = None):
+        from http.client import HTTPConnection
+        import threading
+
+        http_server = MODULE.ThreadingHTTPServer(("127.0.0.1", 0), MODULE.Handler)
+        server_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            connection = HTTPConnection("127.0.0.1", http_server.server_port)
+            connection.putrequest(method, path, skip_host=True)
+            for name, value in headers.items():
+                connection.putheader(name, value.replace("{port}", str(http_server.server_port)))
+            encoded = body.encode("utf-8") if body is not None else b""
+            if body is not None:
+                connection.putheader("Content-Length", str(len(encoded)))
+            connection.endheaders(encoded or None)
+            response = connection.getresponse()
+            return response.status, json.loads(response.read().decode("utf-8"))
+        finally:
+            http_server.shutdown()
+            http_server.server_close()
+            server_thread.join(timeout=2)
+
+    def test_foreign_host_header_is_refused_before_any_api_work(self) -> None:
+        # DNS rebinding and public tunnels both arrive with a non-loopback Host.
+        with patch.object(MODULE, "start_run", side_effect=AssertionError("must not start")):
+            status, payload = self._raw_request(
+                "POST", "/api/runs",
+                headers={"Host": "lab.lobotomy.help", "Content-Type": "application/json"},
+                body='{"task_text":"write a script"}',
+            )
+            self.assertEqual(status, 403)
+            self.assertIn("127.0.0.1", payload["error"])
+            status, _ = self._raw_request("GET", "/api/runs", headers={"Host": "attacker.example:{port}"})
+            self.assertEqual(status, 403)
+
+    def test_cross_site_post_is_refused(self) -> None:
+        with patch.object(MODULE, "configure_provider", side_effect=AssertionError("must not run")):
+            status, _ = self._raw_request(
+                "POST", "/api/provider",
+                headers={"Host": "127.0.0.1:{port}", "Origin": "https://evil.example",
+                         "Content-Type": "application/json"},
+                body='{"provider":"openai","endpoint":"https://evil.example/v1","model":"m","api_key":"k"}',
+            )
+            self.assertEqual(status, 403)
+
+    def test_simple_content_type_post_is_refused(self) -> None:
+        # A no-cors fetch or HTML form can send text/plain without a preflight.
+        with patch.object(MODULE, "start_run", side_effect=AssertionError("must not start")):
+            status, _ = self._raw_request(
+                "POST", "/api/runs",
+                headers={"Host": "127.0.0.1:{port}", "Content-Type": "text/plain"},
+                body='{"task_text":"write a script"}',
+            )
+        self.assertEqual(status, 415)
+
+    def test_event_pages_return_the_complete_ordered_log(self) -> None:
+        run = MODULE.RUNS_DIR / "event-page-test"
+        run.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: __import__("shutil").rmtree(run, ignore_errors=True))
+        lines = [json.dumps({"event": "tick", "data": {"n": n}}) for n in range(250)]
+        (run / "events.jsonl").write_text("\n".join(lines[:120]) + "\nnot json\n" + "\n".join(lines[120:]) + "\n", encoding="utf-8")
+
+        first = MODULE.read_event_page("event-page-test", 0)
+        self.assertEqual(len(first["events"]), 250)
+        self.assertEqual(first["events"][0]["data"]["n"], 0)
+        self.assertEqual(first["events"][-1]["data"]["n"], 249)
+        self.assertTrue(first["complete"])
+        later = MODULE.read_event_page("event-page-test", first["next"])
+        self.assertEqual((later["events"], later["complete"]), ([], True))
+        with self.assertRaises(MODULE.ApiError):
+            MODULE.read_event_page("event-page-test", "x")
+
+    def test_console_modules_are_served_as_javascript(self) -> None:
+        status, _ = self._raw_request("GET", "/api/health", headers={"Host": "127.0.0.1:{port}"})
+        self.assertEqual(status, 200)
+        for name in ("app.js", "narration.js", "source.js", "specimen.js"):
+            self.assertIn(name, MODULE.STATIC_FILES)
+        self.assertEqual(MODULE.STATIC_TYPES[".js"], "text/javascript")
+
+    def test_same_origin_console_and_bridge_requests_still_work(self) -> None:
+        status, payload = self._raw_request(
+            "POST", "/api/runs",
+            headers={"Host": "127.0.0.1:{port}", "Origin": "http://127.0.0.1:{port}",
+                     "Content-Type": "application/json"},
+            body='{"task_text":""}',
+        )
+        self.assertEqual((status, payload["error"]), (400, "task_text is required"))
+        status, payload = self._raw_request("GET", "/api/health", headers={"Host": "localhost:{port}"})
+        self.assertEqual((status, payload["status"]), (200, "ok"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,8 @@ The default provider is the llama.cpp server at 127.0.0.1:8080. An optional Open
 
 | Area | Responsibility |
 | --- | --- |
-| agent-lab/ui/ | Serves the browser console, exposes local APIs, manages interactive sessions and run workers, and renders activity from persisted harness events. |
+| agent-lab/ui/ | `server.py` serves the console and local APIs and manages interactive sessions and run workers. The console is ES modules: `narration.js` derives rows, headline, phase, budget, checks and files from harness events (shared by live view, replay, chats and the showcase), `source.js` selects the live API or recorded showcase files, `specimen.js` animates agent state, and `app.js` renders views. |
+| site/showcase/ and scripts/export_showcase.py | Sanitized recordings of selected runs and chats. GitHub Pages serves the unmodified console against them in read-only mode. |
 | agent-lab/harness/agent_harness.py | Owns the agent loop, provider calls, action validation and dispatch, finish gates, and run/session logging. Supporting modules separate workflow, recovery, context limits, approvals, persistence, review packets, job state, skills, and workspace locks. |
 | agent-lab/harness/provider.py | Selects the configured local provider or optional OpenAI-compatible chat-completions provider. Both use the same harness controls. |
 | agent-lab/tasks/ and agent-lab/checks/ | Define the task catalog and independent checkers. Evaluators grade artifacts; they do not edit the project. |
@@ -34,6 +35,6 @@ Benchmark tasks invoke checkers such as agent-lab/checks/check_static_page.py ag
 
 Scratch work, persistent Agent Lab projects, and explicitly attached existing folders have different lifetimes, but all are real directories on the host. A workspace lease prevents concurrent Agent Lab workers from targeting the same persistent/existing path. It is coordination, not isolation from the operating system or other processes. Tool-level path checks and command allowlists likewise reduce mistakes but do not turn the harness into a VM or container sandbox.
 
-The UI binds to loopback at port 8787; the default local inference endpoint is loopback port 8080. An optional remote API key is held at runtime and is not supposed to enter checked-in config or run records. Keep secrets outside model-visible workspaces.
+The UI binds to loopback at port 8787 and answers only loopback `Host`/`Origin` values and JSON POST bodies, so browser pages and tunnels cannot drive it; the default local inference endpoint is loopback port 8080. An optional remote API key is held at runtime and is not supposed to enter checked-in config or run records. Keep secrets outside model-visible workspaces.
 
 For current implementation gaps see [STATUS.md](STATUS.md). Detailed rationale and acceptance criteria live with the dated [specifications](superpowers/specs/) and [plans](superpowers/plans/).

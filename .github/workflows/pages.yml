@@ -1,14 +1,14 @@
-name: Deploy Agent Lab visual preview
+name: Deploy Agent Lab showcase
 
+# The public site is the real console (agent-lab/ui) in read-only showcase
+# mode, replaying recorded runs exported by scripts/export_showcase.py.
 on:
   push:
     branches: [main]
     paths:
       - ".github/workflows/pages.yml"
-      - "README.md"
-      - "agent-lab/ui/favicon.svg"
-      - "agent-lab/ui/styles.css"
-      - "site/**"
+      - "agent-lab/ui/**"
+      - "site/showcase/**"
   workflow_dispatch:
 
 permissions:
@@ -32,17 +32,17 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      - name: Test and assemble static preview
+      - name: Test and assemble the showcase
         shell: bash
         run: |
-          node --check site/preview.js
-          node --test site/test_preview.mjs
-          mkdir -p _site/assets
-          cp site/index.html _site/index.html
-          cp site/preview.js _site/preview.js
-          cp site/preview.css _site/assets/preview.css
-          cp agent-lab/ui/styles.css _site/assets/agent-lab.css
-          cp agent-lab/ui/favicon.svg _site/favicon.svg
+          for f in app.js narration.js source.js specimen.js; do node --check "agent-lab/ui/$f"; done
+          node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_narration.mjs
+          test -f site/showcase/manifest.json
+          mkdir -p _site
+          cp agent-lab/ui/index.html agent-lab/ui/app.js agent-lab/ui/narration.js agent-lab/ui/source.js \
+             agent-lab/ui/specimen.js agent-lab/ui/styles.css agent-lab/ui/favicon.svg _site/
+          cp -r site/showcase _site/showcase
+          touch _site/.nojekyll
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

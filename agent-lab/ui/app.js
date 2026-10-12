@@ -1,2020 +1,1310 @@
-const state = {
-  activeRun: null,
-  activeSession: null,
-  activeKind: null,
-  activeRecord: null,
-  selectedFile: null,
-  sessionFilter: "",
-  reasoningLevel: "standard",
-  approvalMode: "auto",
-  provider: { provider: "local", label: "Local model", endpoint: "", model: "", has_api_key: false },
-  reasoningOptions: [],
-  skills: [],
-  skillDefaults: [],
-  skillOverrides: { enabled: [], disabled: [] },
-  projects: [],
-  sessions: [],
-  runPollTimer: null,
-  sessionPollTimer: null,
-  tasks: [],
-  mode: "chats",
-  detailsTab: "overview",
-  modalReturnFocus: new Map(),
-};
+// Agent Lab console. Views render from the narration model; data comes from
+// the live local API or, for the public showcase, from recorded runs.
+
+import { createSource, ShowcaseError } from "./source.js";
+import { buildRunModel, buildChatActivity, partsText, clockText, formatBytes, PHASES, chatTitle, runTitle } from "./narration.js";
+import { Specimen } from "./specimen.js";
 
 const $ = (id) => document.getElementById(id);
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const TERMINAL = new Set(["success", "complete", "blocked", "error", "failed", "aborted"]);
+const EXTENSION_LIMIT = 6;
 
-function setMode(mode, { focus = false } = {}) {
-  const nextMode = mode === "runs" ? "runs" : "chats";
-  state.mode = nextMode;
-  $("layout").dataset.mode = nextMode;
-  $("chatSurface").hidden = nextMode !== "chats";
-  $("runSurface").hidden = nextMode !== "runs";
-  $("chatNavigation").hidden = nextMode !== "chats";
-  $("runNavigation").hidden = nextMode !== "runs";
-  [["chatsModeButton", "chats"], ["runsModeButton", "runs"]].forEach(([id, value]) => {
-    const active = value === nextMode;
-    const button = $(id);
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-  });
-  if (focus) $(nextMode === "runs" ? "runsModeButton" : "chatsModeButton").focus();
+const ICONS = {
+  look: '<path d="M2 6.5a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0-9 0M10 10l3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  read: '<path d="M2 3h4.5c.8 0 1.5.7 1.5 1.5V13c0-.8-.7-1.5-1.5-1.5H2zM14 3H9.5C8.7 3 8 3.7 8 4.5V13c0-.8.7-1.5 1.5-1.5H14z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
+  write: '<path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12zM9.5 4l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
+  run: '<path d="M2.5 4l4 4-4 4M8 12.5h5.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  diff: '<path d="M4 2v12M12 2v12M1.5 5H6.5M9.5 11h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  flag: '<path d="M3.5 14V2.5M3.5 3h8l-2 3 2 3h-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>',
+  check: '<path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+  x: '<path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  fold: '<path d="M3 5h10M3 8h7M3 11h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  loop: '<path d="M12.5 6A5 5 0 0 0 3.6 4.6M3.5 10A5 5 0 0 0 12.4 11.4M3 2v3h3M13 14v-3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+  hand: '<path d="M5 8V3.5a1 1 0 0 1 2 0V7M7 7V2.5a1 1 0 0 1 2 0V7M9 7V3.5a1 1 0 0 1 2 0V9c0 3-1.5 5-4 5S3.5 12.5 3 10l-.5-2a1 1 0 0 1 2-.5L5 9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>',
+  dot: '<circle cx="8" cy="8" r="2.5" fill="currentColor"/>',
+};
+const icon = (name) => `<svg viewBox="0 0 16 16" aria-hidden="true">${ICONS[name] || ICONS.dot}</svg>`;
+const MINI_CELL = '<svg viewBox="-50 -50 100 100" aria-hidden="true"><circle r="34" fill="rgba(169,189,128,.08)" stroke="#879868" stroke-width="3"/><circle r="12" fill="#a9bd80"/><circle cx="-4" cy="-4" r="4" fill="#121512" opacity=".55"/></svg>';
+
+function partsHtml(parts) {
+  return (parts || []).map((part) => {
+    if (part.t === "code") return `<code>${esc(part.v)}</code>`;
+    if (part.t === "dim") return `<span class="dim">${esc(part.v)}</span>`;
+    return esc(part.v);
+  }).join("");
 }
 
-function openModal(dialogId, triggerId) {
-  const dialog = $(dialogId);
-  const trigger = triggerId ? $(triggerId) : document.activeElement;
-  if (trigger instanceof HTMLElement) state.modalReturnFocus.set(dialogId, trigger);
-  if (dialogId === "runDialog") {
-    $("launchNote").className = "launch-note";
-    $("launchNote").textContent = "Runs use the active project and reasoning level.";
-    state.skillOverrides = { enabled: [], disabled: [] };
-    loadSkills($("workspacePath").value.trim()).catch((error) => {
-      $("skillSummary").textContent = `Skill catalog unavailable: ${error.message}`;
-    });
-  }
-  if (dialogId === "providerDialog") syncProviderDialog();
-  if (!dialog.open) dialog.showModal();
-  if (dialogId === "workspaceDialog") $("mobileWorkspaceButton").setAttribute("aria-expanded", "true");
+function timeAgo(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
 }
 
-function closeModal(dialogId) {
-  const dialog = $(dialogId);
-  if (dialog.open) dialog.close();
+function sessionStamp(id) {
+  const m = /chat-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(id || "");
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])).getTime() / 1000;
 }
 
-function restoreModalFocus(dialogId) {
-  if (dialogId === "workspaceDialog") $("mobileWorkspaceButton").setAttribute("aria-expanded", "false");
-  const trigger = state.modalReturnFocus.get(dialogId);
-  state.modalReturnFocus.delete(dialogId);
-  if (trigger?.isConnected) trigger.focus();
-}
-
-function setDetailsTab(tab, { focus = false } = {}) {
-  const validTabs = ["overview", "workflow", "review", "activity", "files"];
-  const nextTab = validTabs.includes(tab) ? tab : "overview";
-  state.detailsTab = nextTab;
-  document.querySelectorAll(".details-tab").forEach((button) => {
-    const active = button.dataset.detailsTab === nextTab;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-    if (active && focus) button.focus();
-  });
-  const panels = {
-    overview: "detailsOverview",
-    workflow: "detailsWorkflow",
-    review: "detailsReview",
-    activity: "detailsActivity",
-    files: "detailsFiles",
-  };
-  Object.entries(panels).forEach(([value, id]) => {
-    $(id).hidden = value !== nextTab;
-  });
-}
-
-const FALLBACK_REASONING_OPTIONS = [
-  { value: "off", label: "Off", budget: 0, max_tokens: 700, description: "Fastest replies with thinking disabled." },
-  { value: "low", label: "Low", budget: 256, max_tokens: 1024, description: "A short verification pass for simple tasks." },
-  { value: "standard", label: "Standard", budget: 1024, max_tokens: 2048, description: "The normal balance of quality and latency." },
-  { value: "deep", label: "Deep", budget: 2048, max_tokens: 3072, description: "More room for multi-step reasoning and debugging." },
-  { value: "max", label: "Max", budget: 3072, max_tokens: 4096, description: "The slowest, most deliberate local setting." },
-];
-
-const WORKFLOW_PHASES = [
-  { id: "intake", label: "Intake" },
-  { id: "inspect", label: "Inspect" },
-  { id: "design", label: "Design" },
-  { id: "plan", label: "Plan" },
-  { id: "implement", label: "Build" },
-  { id: "verify", label: "Verify" },
-  { id: "review", label: "Review" },
-  { id: "complete", label: "Done" },
-];
-
-const FALLBACK_WORKFLOW = {
-  phase: "intake",
-  status: "active",
-  summary: "Request received.",
-  next_action: "Understand the request and inspect the project.",
-  artifacts: [],
-  checkpoint_count: 0,
+/* ---------------- state ---------------- */
+const state = {
+  source: null,
+  mode: "runs",
+  route: { kind: "runs", id: null },
+  runs: [],
+  sessions: [],
+  tasks: [],
+  levels: [],
+  projects: [],
+  provider: null,
+  skills: { defaults: [], skills: [] },
+  workspace: loadWorkspace(),
+  filter: "",
+  run: null, // { id, state, events, offset, complete, replay }
+  session: null,
+  drawer: { open: false, tab: "overview", file: null },
+  firstShowcaseVisit: true,
 };
 
-function normalizeWorkflow(workflow) {
-  const value = workflow && typeof workflow === "object" ? workflow : {};
-  const phaseIds = new Set([...WORKFLOW_PHASES.map((item) => item.id), "blocked"]);
-  const phase = phaseIds.has(value.phase) ? value.phase : FALLBACK_WORKFLOW.phase;
-  const status = phase === "complete" ? "complete" : phase === "blocked" || value.status === "blocked" ? "blocked" : "active";
-  return {
-    ...FALLBACK_WORKFLOW,
-    ...value,
-    phase,
-    status,
-    summary: String(value.summary || FALLBACK_WORKFLOW.summary),
-    next_action: String(value.next_action || FALLBACK_WORKFLOW.next_action),
-    artifacts: Array.isArray(value.artifacts) ? value.artifacts : [],
-    checkpoint_count: Number(value.checkpoint_count || 0),
-  };
-}
-
-function renderWorkflow(workflow = state.activeRecord?.workflow) {
-  const normalized = normalizeWorkflow(workflow);
-  const blocked = normalized.status === "blocked";
-  const phases = blocked ? [...WORKFLOW_PHASES, { id: "blocked", label: "Blocked" }] : WORKFLOW_PHASES;
-  const activeIndex = phases.findIndex((item) => item.id === normalized.phase);
-  const heading = phases.find((item) => item.id === normalized.phase)?.label || "Intake";
-  const statusLabelText = normalized.status === "complete" ? "Complete" : normalized.status === "blocked" ? "Blocked" : "Active";
-  const headingElement = $("workflowHeading");
-  const statusElement = $("workflowStatus");
-  const stepsElement = $("workflowSteps");
-  const summaryElement = $("workflowSummary");
-  const nextElement = $("workflowNext");
-  if (!headingElement || !statusElement || !stepsElement || !summaryElement || !nextElement) return;
-
-  headingElement.textContent = heading;
-  statusElement.className = `workflow-status ${normalized.status}`;
-  statusElement.textContent = statusLabelText;
-  summaryElement.textContent = normalized.summary;
-  nextElement.textContent = normalized.next_action;
-  stepsElement.className = `workflow-steps ${normalized.status}`;
-  stepsElement.innerHTML = phases.map((item, index) => {
-    const isComplete = normalized.status === "complete" ? item.id !== "complete" && item.id !== "blocked" : index < activeIndex;
-    const isActive = item.id === normalized.phase && normalized.status !== "complete";
-    const classes = ["workflow-step"];
-    if (isComplete) classes.push("complete");
-    if (isActive) classes.push("active");
-    if (item.id === "blocked") classes.push("blocked");
-    return `<div class="${classes.join(" ")}" aria-current="${isActive ? "step" : "false"}">
-      <span class="workflow-step-index">${String(index + 1).padStart(2, "0")}</span>
-      <span class="workflow-step-label">${escapeText(item.label)}</span>
-    </div>`;
-  }).join("");
-}
-
-function reasoningOption(level) {
-  return (state.reasoningOptions.length ? state.reasoningOptions : FALLBACK_REASONING_OPTIONS).find((item) => item.value === level)
-    || FALLBACK_REASONING_OPTIONS.find((item) => item.value === "standard");
-}
-
-function formatTokenCount(value) {
-  return Number(value || 0).toLocaleString();
-}
-
-function renderReasoningControl(record = state.activeRecord) {
-  const select = $("reasoningLevel");
-  const hint = $("reasoningHint");
-  if (!select || !hint) return;
-  const reasoning = record?.reasoning || {};
-  const level = reasoning.level || state.reasoningLevel || "standard";
-  const option = reasoningOption(level);
-  state.reasoningLevel = level;
-  if ([...select.options].some((item) => item.value === level)) select.value = level;
-  const budget = reasoning.budget ?? option.budget;
-  hint.textContent = budget > 0 ? `${formatTokenCount(budget)} thinking tokens` : "Thinking disabled";
-  select.title = reasoning.description || option.description;
-}
-
-function normalizeApprovalMode(value) {
-  return value === "confirm" ? "confirm" : "auto";
-}
-
-function renderApprovalControl(record = state.activeRecord) {
-  const select = $("approvalMode");
-  const hint = $("approvalHint");
-  if (!select || !hint) return;
-  const mode = normalizeApprovalMode(record?.approval_mode || state.approvalMode);
-  state.approvalMode = mode;
-  select.value = mode;
-  hint.textContent = mode === "confirm" ? "Ask before edits" : "Autonomous tools";
-}
-
-function normalizeProvider(value) {
-  return value === "openai_compatible" ? "openai_compatible" : "local";
-}
-
-function providerForRecord(record = state.activeRecord) {
-  const value = record?.provider || state.provider || {};
-  return {
-    provider: normalizeProvider(value.provider),
-    label: value.label || (normalizeProvider(value.provider) === "local" ? "Local model" : "OpenAI API"),
-    endpoint: String(value.endpoint || ""),
-    model: String(value.model || ""),
-    has_api_key: Boolean(value.has_api_key),
-  };
-}
-
-function renderProviderControl(record = state.activeRecord) {
-  const value = providerForRecord(record);
-  const label = $("providerLabel");
-  const button = $("providerButton");
-  if (label) label.textContent = value.provider === "local" ? "Local" : "API";
-  if (button) button.title = value.provider === "local" ? "Using the local model" : `Using ${value.model || "the remote API"}`;
-}
-
-function syncProviderDialog() {
-  const value = providerForRecord();
-  const type = $("providerType");
-  const fields = $("remoteProviderFields");
-  const endpoint = $("providerEndpoint");
-  const model = $("providerModel");
-  const key = $("providerApiKey");
-  const hint = $("providerKeyHint");
-  const status = $("providerStatus");
-  if (!type || !fields || !endpoint || !model || !key || !hint || !status) return;
-  type.value = value.provider;
-  fields.hidden = value.provider !== "openai_compatible";
-  endpoint.value = value.endpoint || "https://api.openai.com/v1/chat/completions";
-  model.value = value.model || "";
-  key.value = "";
-  key.placeholder = value.has_api_key ? "Key already loaded; leave blank to keep it" : "Paste a key for this session only";
-  hint.textContent = value.has_api_key
-    ? "A key is already loaded in memory. Leave this blank to keep it, or paste a replacement."
-    : "The key stays in memory while this Agent Lab process is running. It is never written to the project, transcript, or Git.";
-  status.textContent = value.provider === "local"
-    ? "Local model selected. The next chat or run stays on this machine."
-    : value.has_api_key
-      ? "Remote model selected. The key is loaded in memory."
-      : "Remote model selected. Add a key before using it.";
-}
-
-async function api(path, options = {}) {
-  let response;
+function loadWorkspace() {
   try {
-    response = await fetch(path, options);
-  } catch (error) {
-    throw new Error("The local Agent Lab service is unavailable. Start the UI server again and retry.");
-  }
-  let data = {};
+    const value = JSON.parse(localStorage.getItem("agentlab.workspace") || "null");
+    if (value && typeof value === "object" && ["scratch", "project", "folder"].includes(value.kind)) return value;
+  } catch { /* storage can be unavailable */ }
+  return { kind: "scratch", path: "", name: "Temporary folder" };
+}
+
+function saveWorkspace() {
+  try { localStorage.setItem("agentlab.workspace", JSON.stringify(state.workspace)); } catch { /* ignore */ }
+}
+
+/* ---------------- toasts & guards ---------------- */
+function toast(message, tone = "") {
+  const node = document.createElement("div");
+  node.className = `toast ${tone}`;
+  node.textContent = message;
+  $("toasts").appendChild(node);
+  setTimeout(() => { node.classList.add("leaving"); setTimeout(() => node.remove(), 300); }, tone === "bad" ? 6500 : 3800);
+}
+
+async function attempt(work, { busy } = {}) {
+  if (busy) busy.disabled = true;
   try {
-    data = await response.json();
+    return await work();
   } catch (error) {
-    data = { error: `The server returned an invalid response (${response.status}).` };
-  }
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
-  return data;
-}
-
-function escapeText(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function formatBytes(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatTime(timestamp) {
-  if (!timestamp) return "";
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
-
-function sessionAge(sessionId) {
-  const match = String(sessionId || "").match(/^chat-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
-  if (!match) return "recently";
-  const [, year, month, day, hour, minute, second] = match;
-  const created = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
-  const elapsed = Math.max(0, Date.now() - created.getTime());
-  const minutes = Math.floor(elapsed / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
-}
-
-function shortenPath(path) {
-  const value = String(path || "").trim();
-  if (!value) return "Managed folder";
-  const parts = value.split(/[\\/]+/).filter(Boolean);
-  if (parts.length <= 3) return value;
-  const prefix = /^[A-Za-z]:[\\/]/.test(value) ? `${value.slice(0, 2)}\\` : "";
-  return `${prefix}…\\${parts.slice(-2).join("\\")}`;
-}
-
-function comparablePath(path) {
-  return String(path || "").trim().replace(/[\\/]+$/, "").toLowerCase();
-}
-
-function projectForPath(path) {
-  const target = comparablePath(path);
-  return state.projects.find((project) => comparablePath(project.path) === target) || null;
-}
-
-function workspaceLabelForRecord(record) {
-  const project = projectForPath(record?.project);
-  if (project) return `${project.name} project`;
-  if (record?.workspace_mode === "selected" && record.project) return `Existing folder · ${shortenPath(record.project)}`;
-  return "Scratch workspace";
-}
-
-function renderProjectOptions() {
-  const select = $("projectSelect");
-  if (!select) return;
-  const currentPath = $("workspacePath")?.value.trim() || "";
-  const project = projectForPath(currentPath);
-  const options = ['<option value="">Scratch workspace</option>'];
-  if (currentPath && !project) {
-    options.push(`<option value="${escapeText(currentPath)}">Existing folder · ${escapeText(shortenPath(currentPath))}</option>`);
-  }
-  options.push(...state.projects.map((item) => `<option value="${escapeText(item.path)}">${escapeText(item.name)}</option>`));
-  select.innerHTML = options.join("");
-  select.value = project?.path || (currentPath && !project ? currentPath : "");
-}
-
-function setWorkspaceNotice(message, tone = "") {
-  const status = $("workspaceStatus");
-  if (!status) return;
-  status.className = `workspace-status ${tone}`.trim();
-  status.textContent = message;
-}
-
-function updateWorkspaceSummary() {
-  const input = $("workspacePath");
-  const rawPath = input ? input.value.trim() : state.activeRecord?.project || "";
-  const project = projectForPath(rawPath);
-  const selected = Boolean(rawPath);
-  const locationLabel = project ? shortenPath(project.path) : selected ? shortenPath(rawPath) : "Temporary folder";
-  const workspaceLabel = project ? `${project.name} project` : selected ? `Existing folder · ${shortenPath(rawPath)}` : "Scratch workspace";
-  const mode = $("workspaceMode");
-  const location = $("workspaceLocation");
-  const projectName = $("activeProjectName");
-  const composer = $("composerWorkspace");
-  const topbar = $("topbarWorkspace");
-  const mobileLocation = $("mobileWorkspaceLocation");
-  const runTarget = $("runTarget");
-  const heading = $("workspaceHeadingWorkspace");
-  const openButton = $("openProjectButton");
-  if (mode) mode.textContent = project ? "PROJECT" : selected ? "EXTERNAL" : "SCRATCH";
-  if (location) location.textContent = locationLabel;
-  if (projectName) projectName.textContent = project?.name || (selected ? "Existing folder" : "Scratch workspace");
-  if (composer) composer.textContent = workspaceLabel;
-  if (topbar) topbar.textContent = project?.name || (selected ? "Existing folder" : "Scratch workspace");
-  if (mobileLocation) mobileLocation.textContent = locationLabel;
-  if (runTarget) runTarget.textContent = workspaceLabel;
-  if (heading) heading.textContent = workspaceLabel;
-  if (openButton) {
-    openButton.textContent = "Open folder";
-    openButton.classList.toggle("ready", selected);
-  }
-  setWorkspaceNotice(
-    project ? `${project.name} is persistent. New chats and runs will use it.` : selected ? "Attached folder. The harness can edit it directly." : "Scratch work is isolated and disposable.",
-  );
-  renderProjectOptions();
-}
-
-function statusLabel(status) {
-  const labels = { ready: "Ready", idle: "Idle", thinking: "Thinking", running: "Running", success: "Success", complete: "Complete", blocked: "Blocked", error: "Error", interrupted: "Interrupted", failed: "Failed", waiting_approval: "Approval needed" };
-  return labels[status] || status || "Ready";
-}
-
-function readableSummary(value) {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  const jsonStart = text.indexOf("{");
-  if (jsonStart < 0) return text;
-  try {
-    const payload = JSON.parse(text.slice(jsonStart));
-    const message = payload?.error?.message || payload?.message;
-    if (message) {
-      const prefix = text.slice(0, jsonStart).trim().replace(/[:\s]+$/, "");
-      return prefix ? `${prefix}: ${message}` : String(message);
-    }
-  } catch (error) {
-    // Keep the original summary when the server's diagnostic suffix is not JSON.
-  }
-  return text;
-}
-
-function setStatus(status) {
-  const badge = $("runStatus");
-  const normalized = status || "idle";
-  badge.className = `status-badge ${escapeText(normalized)}`;
-  badge.innerHTML = `<span class="status-dot" aria-hidden="true"></span>${escapeText(statusLabel(normalized))}`;
-}
-
-function eventCopy(event) {
-  const data = event.data || {};
-  switch (event.event) {
-    case "workspace_lock_acquired": return "Workspace reserved for this run";
-    case "workspace_lock_released": return "Workspace released";
-    case "run_created": return data.mode === "selected" ? "Run attached to the selected project folder" : "Run started in a managed project folder";
-    case "session_ready": return data.mode === "selected" ? "Conversation attached to the selected project folder" : "Conversation opened with a managed project folder";
-    case "session_rehydrated": return "Conversation restored from disk";
-   case "job_interrupted": return "Turn interrupted; waiting for your retry";
-    case "job_stop_requested": return "Turn stopped by the user; waiting for retry";
-    case "job_retry_requested": return `Retry started (attempt ${data.job?.attempt || "next"})`;
-    case "job_progress": return `Worker checkpoint: ${data.action || "progress"}`;
-    case "tool_call_started": return `Tool call started: ${data.receipt?.action || "tool"}`;
-    case "tool_call_completed": return `Tool call completed: ${data.receipt?.action || "tool"}`;
-    case "tool_call_settled": return `Tool result recorded: ${data.receipt?.action || "tool"}`;
-    case "tool_result_replayed": return `Recovered the completed ${data.receipt?.action || "tool"} result without repeating it`;
-    case "tool_outcome_unknown": return `Tool outcome unknown: inspect before repeating ${data.receipt?.action || "the action"}`;
-    case "recovery_retry": {
-      const decision = data.decision || {};
-      return `Recovery retry ${decision.attempt || "?"}/${decision.limit || "?"}: ${decision.detail || "repairing the last failure"}`;
-    }
-    case "recovery_duplicate_action": {
-      const decision = data.decision || {};
-      return `Duplicate action stopped before dispatch: ${decision.detail || "same action repeated"}`;
-    }
-    case "recovery_exhausted": {
-      const decision = data.decision || {};
-      return `Recovery exhausted: ${decision.detail || "the same failure persisted"}`;
-    }
-    case "context_compacted": {
-      const before = data.before_tokens || "?";
-      const after = data.after_tokens || "?";
-      const dropped = data.dropped_messages || 0;
-      return `Context compacted ${before} → ${after} tokens; ${dropped} older messages summarized`;
-    }
-    case "invalid_model_action": return `Model output needed repair: ${data.error || "the action was not understood"}`;
-    case "model_response": return `Model replied${data.finish_reason ? ` (${data.finish_reason})` : ""}`;
-    case "tool_result": {
-      const action = data.action || "tool";
-      const result = data.result || {};
-     if (action === "write_file") return `Created ${result.path || "a file"}`;
-      if (action === "delete_file") return "Deleted " + (result.path || "a file") + " (backup kept)";
-      if (action === "replace_text") return `Replaced text in ${result.path || data.args?.path || "a file"}`;
-      if (action === "apply_patch") return `Applied changes to ${(result.changed || []).join(", ") || "files"}`;
-      if (action === "run_command") return `Ran ${data.args?.command || "a command"} → exit ${result.exit_code ?? "error"}`;
-      if (action === "list_files") return `Inspected the folder (${result.entries?.length || 0} entries)`;
-      if (action === "read_file") return `Read ${data.args?.path || "a file"}`;
-      return `Used ${action}`;
-    }
-    case "assistant_message": return "Assistant replied";
-    case "workflow_phase": {
-      const workflow = data.state || data.workflow || {};
-      const phase = String(workflow.phase || "intake");
-      return `Workflow → ${phase}${workflow.summary ? ` — ${workflow.summary}` : ""}`;
-    }
-    case "workflow_late_evidence": {
-      const workflow = data.state || {};
-      return `Late workflow evidence recorded: ${data.requested_phase || "checkpoint"} (phase remains ${workflow.phase || "active"})`;
-    }
-    case "finish_rejected": return `Harness rejected completion: ${data.reason || "more work is required"}`;
-    case "evaluator": return `External evaluator ${data.result?.passed ? "passed" : "failed"}`;
-    case "repair_episode_started": return `Repair started: ${(data.repair_episode?.initial_finding_ids || []).join(", ")}`;
-    case "repair_rechecked": return `Repair rechecked: ${data.repair_episode?.status || "active"}`;
-    case "repair_episode_finished": return `Repair finished: ${data.repair_episode?.status || "stopped"}`;
-    case "finish": return `Finished ${data.status || "run"}${data.summary ? ` — ${data.summary}` : ""}`;
-    case "interactive_step_limit": return `Paused at the action limit (${data.max_steps || "maximum"})`;
-    case "turn_limit": return `Stopped at the turn limit (${data.max_turns || "maximum"})`;
-    case "harness_error": return `Harness error: ${data.error || "unknown error"}`;
-    default: return event.event || "event";
-  }
-}
-
-function eventClass(event) {
-  if (event.event.startsWith("repair_")) return event.data?.repair_episode?.status === "passed" ? "success" : event.event === "repair_episode_finished" ? "error" : "tool";
-  if (["finish", "evaluator", "assistant_message", "session_rehydrated"].includes(event.event)) return "success";
-  if (event.event === "workflow_phase") {
-    const phase = event.data?.state?.phase || event.data?.workflow?.phase;
-    return phase === "blocked" ? "error" : phase === "complete" ? "success" : "tool";
-  }
-  if (["harness_error", "finish_rejected", "turn_limit", "interactive_step_limit", "job_interrupted", "job_stop_requested", "recovery_exhausted"].includes(event.event)) return "error";
-  if (["recovery_retry", "recovery_duplicate_action", "workflow_late_evidence", "context_compacted", "tool_call_started", "tool_call_completed", "tool_call_settled", "tool_result_replayed", "tool_outcome_unknown"].includes(event.event)) return "tool";
-  if (event.event === "tool_result") return "tool";
-  return "";
-}
-
-function renderActivity(events) {
-  const container = $("activity");
-  const visibleEvents = events.filter((event) => !["model_response", "assistant_message"].includes(event.event));
-  if (!visibleEvents.length) {
-    container.className = "activity-list empty-panel";
-    container.innerHTML = '<div class="empty-icon" aria-hidden="true">✦</div><div>No activity yet.</div><small>Runs and tool calls will appear here.</small>';
-    return;
-  }
-  container.className = "activity-list";
-  container.innerHTML = visibleEvents.map((event) => `
-    <div class="activity-entry ${eventClass(event)}">
-      <div class="activity-marker"></div>
-      <div class="activity-time">${escapeText(formatTime(event.timestamp))}</div>
-      <div class="activity-title">${escapeText(eventCopy(event))}</div>
-    </div>`).join("");
-  container.scrollTop = container.scrollHeight;
-}
-
-function compactText(value, limit = 220) {
-  const copy = String(value ?? "").replace(/\s+/g, " ").trim();
-  return copy.length > limit ? `${copy.slice(0, limit - 1)}…` : copy;
-}
-
-function compactActivityCopy(event) {
-  return compactText(eventCopy(event), 180);
-}
-
-function humanizeAction(action) {
-  const value = String(action || "tool").replace(/[_-]+/g, " ").trim();
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "Tool";
-}
-
-function toolActionTitle(action) {
-  const titles = {
-    list_files: "Inspecting the project folder",
-    read_file: "Reading a project file",
-    write_file: "Writing a project file",
-    replace_text: "Updating a project file",
-    apply_patch: "Applying a project patch",
-    delete_file: "Removing a project file",
-    run_command: "Running a local command",
-    git_diff: "Reviewing project changes",
-    workflow_checkpoint: "Recording workflow progress",
-    find_skills: "Searching the local skill shelf",
-    finish: "Finishing the run",
-  };
-  return titles[action] || `Using ${humanizeAction(action).toLowerCase()}`;
-}
-
-function toolActionMeta(event) {
-  const data = event.data || {};
-  const action = data.action || data.receipt?.action || "";
-  const args = data.args || data.receipt?.summary || {};
-  if (action === "run_command") return "local command";
-  if (args.path && args.path !== ".") return String(args.path);
-  if (action) return action;
-  return "tool";
-}
-
-function toolResultCopy(event) {
-  const data = event.data || {};
-  const action = data.action || "tool";
-  const args = data.args || {};
-  const result = data.result || {};
-  if (result.ok === false || result.error) return compactText(result.error || "The tool reported an error.");
-  if (action === "list_files") {
-    const count = Array.isArray(result.entries) ? result.entries.length : 0;
-    return `Found ${count} ${count === 1 ? "entry" : "entries"} in the project folder.`;
-  }
-  if (action === "read_file") return `Read ${args.path || result.path || "the requested file"}.`;
-  if (action === "write_file") return `Created ${result.path || args.path || "a project file"}.`;
-  if (action === "replace_text") return `Updated ${result.path || args.path || "a project file"}.`;
-  if (action === "apply_patch") {
-    const changed = Array.isArray(result.changed) ? result.changed : [];
-    return changed.length ? `Updated ${changed.join(", ")}.` : "Updated the project files.";
-  }
-  if (action === "delete_file") return `Removed ${result.path || args.path || "a project file"}; a backup was kept.`;
-  if (action === "run_command") {
-    const exitCode = result.exit_code ?? 0;
-    return exitCode === 0 ? "Command completed successfully." : `Command exited with code ${exitCode}.`;
-  }
-  return `Completed ${toolActionTitle(action).toLowerCase()}.`;
-}
-
-function activityKindLabel(event) {
-  const labels = {
-    workspace_lock_acquired: "Workspace",
-    workspace_lock_released: "Workspace",
-    run_created: "Run",
-    session_ready: "Session",
-    session_rehydrated: "Recovery",
-    invalid_model_action: "Model",
-    model_response: "Model",
-    assistant_message: "Reply",
-    tool_call_started: "Tool call",
-    tool_call_completed: "Tool call",
-    tool_call_settled: "Tool result",
-    tool_result: "Tool result",
-    workflow_phase: "Workflow",
-    workflow_late_evidence: "Workflow",
-    harness_error: "Error",
-    finish: "Run",
-  };
-  return labels[event.event] || "Checkpoint";
-}
-
-function phaseLabel(phase) {
-  return WORKFLOW_PHASES.find((item) => item.id === phase)?.label || humanizeAction(phase || "workflow");
-}
-
-function deriveActivityFeed(events) {
-  const items = [];
-  const add = (item) => {
-    const normalized = {
-      kind: "narrative",
-      tone: "neutral",
-      status: "complete",
-      icon: "·",
-      label: "Agent",
-      title: "Activity recorded",
-      copy: "",
-      meta: "",
-      timestamp: "",
-      ...item,
-    };
-    items.push(normalized);
-    return normalized;
-  };
-  const findTool = (action) => {
-    for (let index = items.length - 1; index >= 0; index -= 1) {
-      const item = items[index];
-      if (item.kind === "tool" && item.action === action && ["working", "checking"].includes(item.status)) return item;
-    }
+    toast(error instanceof ShowcaseError ? error.message : error.message || String(error), "bad");
     return null;
-  };
-
-  for (const event of events) {
-    if (!event || !event.event) continue;
-    const data = event.data || {};
-    switch (event.event) {
-      case "workspace_lock_acquired":
-      case "workspace_lock_released":
-      case "model_response":
-      case "tool_call_settled":
-        break;
-      case "run_created":
-        add({
-          label: "Run started",
-          title: data.mode === "selected" ? "Attached to the selected project" : "Opened a fresh project workspace",
-          copy: "The agent has a clean place to work.",
-          icon: "◇",
-          timestamp: event.timestamp,
-        });
-        break;
-      case "session_ready":
-        add({ label: "Session ready", title: "The conversation is ready", copy: "The selected project context is attached.", icon: "◇", timestamp: event.timestamp });
-        break;
-      case "session_rehydrated":
-        add({ label: "Recovered", title: "Restored the conversation from disk", copy: "The previous project context is available again.", icon: "↻", tone: "success", timestamp: event.timestamp });
-        break;
-      case "workflow_phase": {
-        const workflow = data.state || data.workflow || {};
-        const phase = String(workflow.phase || "intake");
-        add({
-          label: phaseLabel(phase),
-          title: compactText(workflow.summary || `Moving through ${phaseLabel(phase).toLowerCase()}.`, 150),
-          copy: workflow.next_action ? `Next: ${compactText(workflow.next_action, 180)}` : "",
-          icon: phase === "complete" ? "✓" : "·",
-          tone: workflow.status === "blocked" ? "error" : phase === "complete" ? "success" : "neutral",
-          timestamp: event.timestamp,
-        });
-        break;
-      }
-      case "workflow_late_evidence":
-        add({ label: "Workflow", title: "Recorded a late checkpoint", copy: compactActivityCopy(event), icon: "↺", tone: "tool", timestamp: event.timestamp });
-        break;
-      case "tool_call_started": {
-        const action = data.receipt?.action || "tool";
-        add({
-          kind: "tool",
-          label: "Tool call",
-          title: toolActionTitle(action),
-          copy: "Waiting for the tool result.",
-          meta: toolActionMeta(event),
-          action,
-          status: "working",
-          icon: "↗",
-          tone: "active",
-          timestamp: event.timestamp,
-        });
-        break;
-      }
-      case "tool_call_completed": {
-        const action = data.receipt?.action || "tool";
-        const item = findTool(action);
-        if (item) {
-          item.status = "checking";
-          item.copy = "Tool returned; recording the result.";
-          item.timestamp = event.timestamp || item.timestamp;
-        }
-        break;
-      }
-      case "tool_result": {
-        const action = data.action || "tool";
-        const item = findTool(action) || add({ kind: "tool", label: "Tool result", title: toolActionTitle(action), action, icon: "↗", timestamp: event.timestamp });
-        const failed = data.result?.ok === false || Boolean(data.result?.error);
-        item.label = failed ? "Tool result" : "Tool result";
-        item.title = toolActionTitle(action);
-        item.copy = toolResultCopy(event);
-        item.meta = toolActionMeta(event);
-        item.status = failed ? "error" : "complete";
-        item.tone = failed ? "error" : "success";
-        item.timestamp = event.timestamp || item.timestamp;
-        break;
-      }
-      case "tool_result_replayed":
-        add({ label: "Recovery", title: "Reused a recorded tool result", copy: compactActivityCopy(event), icon: "↻", tone: "tool", timestamp: event.timestamp });
-        break;
-      case "tool_outcome_unknown":
-        add({ label: "Recovery", title: "Paused before repeating a tool action", copy: compactActivityCopy(event), icon: "!", tone: "error", timestamp: event.timestamp });
-        break;
-      case "assistant_message": {
-        const content = compactText(data.content, 420);
-        if (content) add({ label: "Agent update", title: "The agent added an update", copy: content, icon: "A", tone: "success", timestamp: event.timestamp });
-        break;
-      }
-      case "approval_requested":
-        add({ label: "Approval", title: "The agent is waiting for your approval", copy: "The next project change is paused until you decide.", icon: "?", tone: "waiting", status: "working", timestamp: event.timestamp });
-        break;
-      case "invalid_model_action":
-        add({ label: "Model repair", title: "The model output needed repair", copy: compactText(data.error || "The action was not understood.", 220), icon: "↺", tone: "tool", timestamp: event.timestamp });
-        break;
-      case "recovery_retry":
-        add({ label: "Recovery", title: "Trying the last move again", copy: compactActivityCopy(event), icon: "↺", tone: "tool", timestamp: event.timestamp });
-        break;
-      case "recovery_duplicate_action":
-        add({ label: "Recovery", title: "Stopped a duplicate action", copy: compactActivityCopy(event), icon: "!", tone: "waiting", timestamp: event.timestamp });
-        break;
-      case "recovery_exhausted":
-        add({ label: "Recovery", title: "Recovery attempts are exhausted", copy: compactActivityCopy(event), icon: "!", tone: "error", timestamp: event.timestamp });
-        break;
-      case "context_compacted":
-        add({ label: "Context", title: "Condensed older context", copy: compactActivityCopy(event), icon: "≈", tone: "tool", timestamp: event.timestamp });
-        break;
-      case "evaluator": {
-        const passed = Boolean(data.result?.passed);
-        add({ label: "Verification", title: data.result?.error ? "The evaluator could not grade the project" : passed ? "The evaluator passed" : "The evaluator found a problem", copy: data.result?.error || (data.result?.findings || []).map((item) => item.message).join("; ") || "External evaluation completed.", icon: passed ? "✓" : "!", tone: passed ? "success" : "error", timestamp: event.timestamp });
-        break;
-      }
-      case "repair_episode_started":
-      case "repair_rechecked":
-      case "repair_episode_finished": {
-        const repair = data.repair_episode || {};
-        const passed = repair.status === "passed";
-        const title = event.event === "repair_episode_started" ? "Repairing failed requirements" : event.event === "repair_rechecked" ? "Rechecked the repaired project" : passed ? "Repair passed the evaluator" : "Repair stopped";
-        add({ label: "Evaluator repair", title, copy: `${repair.outcome || (repair.final_finding_ids || []).join(", ")} · ${repair.extension_turns_used || 0}/${repair.extension_limit ?? 6} extra turns used`, icon: passed ? "✓" : "↻", tone: passed ? "success" : repair.status === "active" ? "tool" : "error", timestamp: event.timestamp });
-        break;
-      }
-      case "finish":
-        add({ label: "Finished", title: data.status === "success" ? "The run finished successfully" : "The run stopped", copy: data.summary || "The run reached a terminal state.", icon: data.status === "success" ? "✓" : "!", tone: data.status === "success" ? "success" : "error", timestamp: event.timestamp });
-        break;
-      case "harness_error":
-        add({ label: "Needs attention", title: "The run hit an error", copy: compactText(data.error || "The harness reported an unknown error.", 420), icon: "!", tone: "error", timestamp: event.timestamp });
-        break;
-      case "interactive_step_limit":
-      case "turn_limit":
-        add({ label: "Paused", title: event.event === "turn_limit" ? "The run reached its turn limit" : "The run reached its action limit", copy: compactActivityCopy(event), icon: "Ⅱ", tone: "waiting", timestamp: event.timestamp });
-        break;
-      default:
-        break;
-    }
-  }
-  return items.slice(-60);
-}
-
-function activityStatusLabel(status) {
-  return { working: "Working", checking: "Checking", complete: "Done", error: "Needs attention" }[status] || "Recorded";
-}
-
-function renderActivityFeedItem(item, current) {
-  const currentClass = current ? " current" : "";
-  const status = item.kind === "tool" || item.status === "working" || item.status === "checking" || item.status === "error"
-    ? `<span class="run-activity-item-status">${escapeText(activityStatusLabel(item.status))}</span>`
-    : "";
-  const meta = item.meta ? `<code>${escapeText(item.meta)}</code>` : "";
-  const copy = item.copy ? `<p>${escapeText(item.copy)}</p>` : "";
-  return `<article class="run-activity-item ${escapeText(item.kind)} ${escapeText(item.tone)}${currentClass}">
-    <div class="run-activity-item-icon" aria-hidden="true">${escapeText(item.icon)}</div>
-    <div class="run-activity-item-body">
-      <div class="run-activity-item-head"><span>${escapeText(item.label)}</span>${meta}<time>${escapeText(formatTime(item.timestamp))}</time></div>
-      <div class="run-activity-item-title"><strong>${escapeText(item.title)}</strong>${status}</div>
-      ${copy}
-    </div>
-  </article>`;
-}
-
-function runActivityStatus(status) {
-  const labels = {
-    running: "Working",
-    waiting_approval: "Waiting for approval",
-    success: "Finished",
-    complete: "Finished",
-    error: "Needs attention",
-    failed: "Needs attention",
-    interrupted: "Interrupted",
-    blocked: "Blocked",
-    ready: "Ready",
-  };
-  return labels[status] || statusLabel(status);
-}
-
-function runActivityTone(status) {
-  if (["error", "failed"].includes(status)) return "error";
-  if (["waiting_approval", "blocked"].includes(status)) return "waiting";
-  if (["success", "complete"].includes(status)) return "complete";
-  if (status === "interrupted") return "interrupted";
-  return "running";
-}
-
-function runActivityHeading(status) {
-  if (status === "running") return "The agent is working";
-  if (status === "waiting_approval") return "The agent needs you";
-  if (["error", "failed"].includes(status)) return "The run needs attention";
-  if (["success", "complete"].includes(status)) return "The run is complete";
-  if (status === "interrupted") return "The run was interrupted";
-  if (status === "blocked") return "The run is blocked";
-  return "Run activity";
-}
-
-function currentActivityItem(feed) {
-  for (let index = feed.length - 1; index >= 0; index -= 1) {
-    if (["working", "checking"].includes(feed[index].status)) return feed[index];
-  }
-  return feed[feed.length - 1] || null;
-}
-
-function runActivityNow(run, item) {
-  const status = run.status || "idle";
-  if (item) return { title: item.title, copy: item.copy || "The latest checkpoint is recorded below." };
-  if (status === "waiting_approval") return { title: "Approval needed", copy: "Waiting for your approval before the next change." };
-  if (["error", "failed"].includes(status)) return { title: "The run stopped", copy: readableSummary(run.summary?.summary) || "The run stopped before it could finish." };
-  if (status === "interrupted") return { title: "The run is paused", copy: "Retry or resume when ready." };
-  if (status === "blocked") return { title: "The workflow is blocked", copy: "Open Details to see what needs attention." };
-  return { title: "Starting the run…", copy: "Waiting for the first checkpoint." };
-}
-
-function activityNearBottom(element) {
-  return element.scrollHeight - element.scrollTop - element.clientHeight < 64;
-}
-
-function updateActivityJumpButton() {
-  const timeline = $("runActivityTimeline");
-  const button = $("runActivityJump");
-  if (!timeline || !button) return;
-  button.hidden = timeline.scrollHeight <= timeline.clientHeight || activityNearBottom(timeline);
-}
-
-function renderRunActivity(run) {
-  const panel = $("runActivityPanel");
-  const timeline = $("runActivityTimeline");
-  const feedContainer = $("runActivityFeed");
-  if (!panel || !timeline || !feedContainer) return;
-
-  const events = Array.isArray(run.events) ? run.events.filter((event) => event && event.event) : [];
-  const feed = deriveActivityFeed(events);
-  const currentItem = currentActivityItem(feed);
-  const status = run.status || "idle";
-  const stateElement = $("runActivityState");
-  const headingElement = $("runActivityHeading");
-  const countElement = $("runActivityCount");
-  const titleElement = $("runActivityNowTitle");
-  const copyElement = $("runActivityNowCopy");
-  const wasNewRun = timeline.dataset.runId !== run.run_id;
-  const stickToBottom = wasNewRun || timeline.dataset.initialized !== "true" || activityNearBottom(timeline);
-  const now = runActivityNow(run, currentItem);
-
-  headingElement.textContent = runActivityHeading(status);
-  stateElement.className = `run-activity-state ${runActivityTone(status)}`;
-  stateElement.textContent = runActivityStatus(status);
-  countElement.textContent = `${feed.length} activity item${feed.length === 1 ? "" : "s"}`;
-  titleElement.textContent = now.title;
-  copyElement.textContent = now.copy;
-
-  if (!feed.length) {
-    timeline.className = "run-activity-timeline empty-panel";
-    feedContainer.className = "run-activity-feed empty-panel";
-    feedContainer.innerHTML = '<div class="run-activity-empty">The run is starting. The first checkpoint will appear here.</div>';
-  } else {
-    timeline.className = "run-activity-timeline";
-    feedContainer.className = "run-activity-feed";
-    feedContainer.innerHTML = feed.map((item) => renderActivityFeedItem(item, item === currentItem && status === "running")).join("");
-  }
-  timeline.dataset.initialized = "true";
-  timeline.dataset.runId = run.run_id || "";
-  if (stickToBottom) timeline.scrollTop = timeline.scrollHeight;
-  updateActivityJumpButton();
-  panel.hidden = false;
-}
-
-function renderFiles(files) {
-  const container = $("fileList");
-  $("fileCount").textContent = files.length ? `${files.length} artifact${files.length === 1 ? "" : "s"}` : "—";
-  if (!files.length) {
-    container.className = "file-list empty-panel";
-    container.innerHTML = '<div>No artifacts yet.</div><small>Files created during this session will appear here.</small>';
-    return;
-  }
-  container.className = "file-list";
-  container.innerHTML = files.map((file) => `
-    <button class="file-button ${state.selectedFile === file.path ? "active" : ""}" type="button" data-file="${encodeURIComponent(file.path)}">
-      <span class="file-name">${escapeText(file.path)}</span><span class="file-size">${formatBytes(file.bytes)}</span>
-    </button>`).join("");
-  container.querySelectorAll(".file-button").forEach((button) => button.addEventListener("click", () => showFile(decodeURIComponent(button.dataset.file))));
-}
-
-function renderRunList(runs) {
-  const container = $("runList");
-  if (!runs.length) {
-    container.innerHTML = '<div class="muted">No runs yet.</div>';
-    return;
-  }
-  container.innerHTML = runs.map((run) => `
-    <button class="run-item ${run.run_id === state.activeRun && state.activeKind === "run" ? "active" : ""}" data-run="${escapeText(run.run_id)}" type="button">
-      <div class="run-item-name">${escapeText(run.task_profile?.title || "Custom task")}</div>
-      <div class="run-item-meta"><span class="run-item-status ${escapeText(run.status)}">${escapeText(run.status)}</span><span>${escapeText(run.run_id)}</span><span>${escapeText(run.changed_files?.length || 0)} files</span></div>
-    </button>`).join("");
-  container.querySelectorAll(".run-item").forEach((button) => button.addEventListener("click", () => selectRun(button.dataset.run)));
-}
-
-function renderSessionList(sessions = state.sessions) {
-  const container = $("sessionList");
-  const query = state.sessionFilter.trim().toLowerCase();
-  const orderedSessions = [...sessions].sort((left, right) => {
-    const leftActive = left.session_id === state.activeSession ? 1 : 0;
-    const rightActive = right.session_id === state.activeSession ? 1 : 0;
-    return rightActive - leftActive;
-  });
-  const filtered = orderedSessions.filter((session) => {
-    if (!query) return true;
-    return `${session.session_id} ${session.status} ${session.model || ""}`.toLowerCase().includes(query);
-  });
-  if (!filtered.length) {
-    container.innerHTML = `<div class="muted">${query ? "No matching conversations." : "No conversations yet."}</div>`;
-    return;
-  }
-  container.innerHTML = filtered.map((session) => `
-    <button class="session-item ${session.session_id === state.activeSession ? "active" : ""}" data-session="${escapeText(session.session_id)}" type="button">
-      <div class="session-item-name">${escapeText(session.session_id)}</div>
-      <div class="session-item-meta">${escapeText(session.conversation?.length || 0)} message${(session.conversation?.length || 0) === 1 ? "" : "s"} · ${escapeText(sessionAge(session.session_id))}</div>
-      <span class="session-menu" aria-hidden="true">⋮</span>
-    </button>`).join("");
-  container.querySelectorAll(".session-item").forEach((button) => button.addEventListener("click", () => selectSession(button.dataset.session)));
-}
-
-function messageTime(message, index, session) {
-  if (message.timestamp) return formatTime(message.timestamp);
-  const events = session.events || [];
-  if (message.role === "user") {
-    const first = events.find((event) => event.event === "session_ready" || event.event === "run_created");
-    return first ? formatTime(first.timestamp) : "";
-  }
-  const assistantIndex = session.conversation.slice(0, index).filter((item) => item.role === "assistant").length;
-  const candidates = events.filter((event) => event.event === "assistant_message");
-  return candidates[assistantIndex] ? formatTime(candidates[assistantIndex].timestamp) : "";
-}
-
-function isRecoverableJob(session) {
-  const jobStatus = session?.job?.status;
-  return !session?.busy && ["interrupted", "failed"].includes(jobStatus);
-}
-
-function renderJobRecovery(session) {
-  const stop = $("stopJobButton");
-  const button = $("retryJobButton");
-  const note = $("chatNote");
-  const send = $("sendButton");
-  const approvalJob = $("approvalJob");
-  const approvalCopy = $("approvalJobCopy");
-  if (!button || !note || !send) return;
-  const recoverable = isRecoverableJob(session);
-  const busy = Boolean(session?.busy);
-  const approval = session?.approval || {};
-  const waitingApproval = approval.status === "pending";
-  if (stop) {
-    stop.hidden = !busy;
-    stop.disabled = !busy;
-  }
-  button.hidden = !recoverable;
-  button.disabled = false;
-  button.textContent = session?.job?.status === "failed" ? "Retry failed turn" : "Resume interrupted turn";
-  if (approvalJob) approvalJob.hidden = !waitingApproval;
-  if (approvalCopy && waitingApproval) {
-    const summary = approval.summary || {};
-    approvalCopy.textContent = summary.action === "run_command"
-      ? `The agent wants to run: ${summary.command || "a command"}`
-      : `The agent wants to change ${summary.path || "the project"}.`;
-  }
-  send.disabled = Boolean(session?.busy || recoverable || waitingApproval);
-  if (busy) {
-    note.textContent = "The model is working...";
-  } else if (recoverable) {
-    note.textContent = "This turn stopped before finishing. Retry it to continue from the saved checkpoint.";
-  } else if (waitingApproval) {
-    note.textContent = "The agent is waiting for your approval before changing the project.";
-  } else {
-    note.textContent = "Shift + Enter for new line";
-  }
-}
-
-function renderChat(session) {
-  const container = $("chatMessages");
-  const messages = session.conversation || [];
-  const modelLabel = escapeText(session.model || "Local model");
-  $("chatHeading").textContent = session.session_id;
-  $("chatStatus").textContent = session.busy ? "thinking" : session.status;
-  renderJobRecovery(session);
-  if (!messages.length) {
-    container.className = "chat-messages empty-panel";
-    container.innerHTML = '<div class="empty-icon" aria-hidden="true">◇</div><div>Send a message to begin.</div>';
-    return;
-  }
-  container.className = "chat-messages";
-  container.innerHTML = messages.map((message, index) => {
-    const isUser = message.role === "user";
-    const time = messageTime(message, index, session);
-    return `
-      <div class="chat-message ${isUser ? "user" : "assistant"}">
-        <div class="avatar ${isUser ? "user" : "assistant"}" aria-hidden="true">${isUser ? "Y" : "A"}</div>
-        <div class="chat-message-body">
-          <div class="chat-message-meta"><span class="chat-role">${isUser ? "You" : modelLabel}</span>${time ? `<span class="chat-time">${escapeText(time)}</span>` : ""}</div>
-          <div class="chat-bubble"><div class="chat-content">${escapeText(message.content)}</div></div>
-        </div>
-      </div>`;
-  }).join("");
-  container.scrollTop = container.scrollHeight;
-}
-
-function detailRow(label, value, className = "") {
-  return `<div class="detail-row"><div class="detail-label">${escapeText(label)}</div><div class="detail-value ${className}">${value}</div></div>`;
-}
-
-function renderReview(review = state.activeRecord?.review) {
-  const value = review && typeof review === "object" ? review : {};
-  const status = ["current", "stale", "not_reviewed"].includes(value.status) ? value.status : "not_reviewed";
-  const changedFiles = Array.isArray(value.changed_files) ? value.changed_files : [];
-  const statusLabel = status === "current" ? "Current" : status === "stale" ? "Needs review" : "Not reviewed";
-  const statusElement = $("reviewStatus");
-  const summaryElement = $("reviewSummary");
-  const statsElement = $("reviewStats");
-  const filesElement = $("reviewFileList");
-  const diffElement = $("reviewDiff");
-  if (!statusElement || !summaryElement || !statsElement || !filesElement || !diffElement) return;
-  statusElement.className = `review-status ${status}`;
-  statusElement.textContent = statusLabel;
-  if (status === "current") {
-    summaryElement.textContent = changedFiles.length
-      ? `${changedFiles.length} changed file${changedFiles.length === 1 ? "" : "s"} captured in the latest review.`
-      : "The latest review found no project changes.";
-  } else if (status === "stale") {
-    summaryElement.textContent = "The project changed after this review. Run git_diff again before trusting the packet.";
-  } else {
-    summaryElement.textContent = "The harness has not captured a diff for this record yet.";
-  }
-  statsElement.innerHTML = [
-    detailRow("Files", escapeText(changedFiles.length)),
-    detailRow("Validation", value.validation?.passed ? "Passed" : value.validation?.command ? "Needs attention" : "Not recorded", "muted-value"),
-    detailRow("Evaluator", value.evaluation?.configured ? (value.evaluation.passed ? "Passed" : "Failed") : "Not configured", "muted-value"),
-  ].join("");
-  filesElement.className = changedFiles.length ? "review-file-list" : "review-file-list empty-panel";
-  filesElement.innerHTML = changedFiles.length
-    ? changedFiles.map((file) => `
-      <div class="review-file-row">
-        <span class="review-file-status ${escapeText(file.status || "modified")}">${escapeText(file.status || "changed")}</span>
-        <span class="review-file-name">${escapeText(file.path || "unknown file")}</span>
-        <span class="review-file-size">${escapeText(file.after_bytes ?? 0)} B</span>
-      </div>`).join("")
-    : '<div>No changed files.</div><small>Run a diff review after making changes.</small>';
-  diffElement.textContent = value.diff || "No diff captured.";
-}
-
-function renderInspector(record = state.activeRecord) {
-  state.activeRecord = record;
-  $("inspectorTitle").textContent = "Details";
-  $("inspectorMeta").textContent = state.activeKind === "run" ? "Run" : "Session";
-  $("inspectorContent").hidden = false;
-  $("inspectorTabs").hidden = false;
-  $("filePreview").hidden = true;
-  $("filesIndex").hidden = false;
-  const id = record?.session_id || record?.run_id || "—";
-  const status = record?.busy ? "thinking" : record?.status || "ready";
-  const model = record?.model || "Local model";
-  const fallbackDirectory = record?.session_id ? `./chat-sessions/${record.session_id}/project` : `./runs/${id}/project`;
-  const directory = record?.project || fallbackDirectory;
-  const workspaceMode = record?.workspace_mode || (record?.project ? "selected" : "managed");
-  const project = projectForPath(directory);
-  const workspaceDescription = project ? `${project.name} · persistent project` : workspaceMode === "selected" ? "Existing folder" : "Scratch workspace";
-  const calls = record?.model_calls || 0;
-  const tools = record?.tool_calls || 0;
-  const reasoning = record?.reasoning || {};
-  const reasoningLabel = reasoning.label || reasoningOption(reasoning.level || state.reasoningLevel).label;
-  const effectiveBudget = reasoning.budget ?? reasoningOption(reasoning.level || state.reasoningLevel).budget;
-  const reasoningBudget = effectiveBudget > 0 ? `${formatTokenCount(effectiveBudget)} tokens` : "Disabled";
-  const reasoningMax = reasoning.max_tokens || reasoningOption(reasoning.level || state.reasoningLevel).max_tokens;
-  const context = record?.context || {};
-  const contextLabel = context.compacted
-    ? `${formatTokenCount(context.after_tokens || 0)} / ${formatTokenCount(context.max_tokens || 0)} tokens · ${context.dropped_messages || 0} older messages summarized`
-    : "No compaction yet";
-  const workflow = normalizeWorkflow(record?.workflow);
-  const skills = record?.skills || {};
-  const skillNames = Array.isArray(skills.resolved) ? skills.resolved.map((item) => item.name).filter(Boolean) : [];
-  const workspaceLock = record?.workspace_lock || {};
-  const toolReceipt = record?.tool_receipt || {};
-  const provider = providerForRecord(record);
-  const taskProfile = record?.task_profile || record?.summary?.task_profile || {};
-  const taskLabel = taskProfile.title || taskProfile.name || (state.activeKind === "run" ? "Custom task" : "Interactive chat");
-  const repair = record?.summary?.repair_episode || record?.progress?.repair_episode;
-  const receiptLabel = toolReceipt.status === "completed"
-    ? "Completed; awaiting transcript settlement"
-    : toolReceipt.status === "unknown"
-      ? "Unknown; inspect before repeating"
-      : toolReceipt.status === "settled"
-        ? "Settled"
-        : toolReceipt.status === "pending"
-          ? "In progress"
-          : "None";
-  renderReasoningControl(record);
-  renderApprovalControl(record);
-  renderProviderControl(record);
-  $("inspectorContent").innerHTML = [
-    detailRow(state.activeKind === "run" ? "Run ID" : "Session ID", escapeText(id), "mono-value"),
-    detailRow("Status", `<span class="status-inline"><span class="status-dot" aria-hidden="true"></span>${escapeText(statusLabel(status))}</span>`),
-    detailRow("Model", escapeText(model)),
-    detailRow("Task", escapeText(taskLabel), "muted-value"),
-    ...(repair ? [
-      detailRow("Evaluator repair", escapeText(repair.status)),
-      detailRow("Initial findings", escapeText((repair.initial_finding_ids || []).join(", ")), "muted-value"),
-      detailRow("Remaining findings", escapeText((repair.final_finding_ids || []).join(", ") || "None"), "muted-value"),
-      detailRow("Repair turns", escapeText(`${repair.repair_episode_turns} episode turns · ${repair.extension_turns_used}/${repair.extension_limit} extra turns`)),
-    ] : []),
-    detailRow("Provider", escapeText(provider.provider === "local" ? "Local model" : `${provider.label} · ${provider.model || "model not set"}`)),
-    detailRow("Reasoning", escapeText(reasoningLabel)),
-    detailRow("Tool approvals", escapeText(normalizeApprovalMode(record?.approval_mode || state.approvalMode) === "confirm" ? "Ask before edits" : "Autonomous")),
-    detailRow("Tool receipt", escapeText(receiptLabel), "muted-value"),
-    detailRow("Workspace lease", escapeText(workspaceLock.status === "held" ? "Held by this worker" : workspaceLock.status === "none" ? "Not held" : "Unavailable"), "muted-value"),
-    detailRow("Thinking budget", escapeText(reasoningBudget), "muted-value"),
-    detailRow("Response cap", `${formatTokenCount(reasoningMax)} tokens`, "muted-value"),
-    detailRow("Context window", escapeText(contextLabel), "muted-value"),
-    detailRow("Skills", escapeText(skillNames.length ? skillNames.join(" · ") : "None selected"), "muted-value"),
-    detailRow("Model calls", escapeText(calls)),
-    detailRow("Tool calls", escapeText(tools)),
-    detailRow("Workflow", escapeText(workflow.phase)),
-    detailRow("Next action", escapeText(workflow.next_action), "muted-value"),
-    detailRow("Project", escapeText(project?.name || (workspaceMode === "selected" ? "Existing folder" : "Scratch workspace")), "muted-value"),
-    detailRow("Workspace", escapeText(workspaceDescription), "muted-value"),
-    detailRow("Working directory", escapeText(directory), "mono-value"),
-    detailRow("Host", "Local machine"),
-    detailRow("Network", "Disabled in harness", "muted-value"),
-  ].join("");
-  setDetailsTab(state.detailsTab);
-  renderReview(record);
-}
-
-function renderRunSurface(run) {
-  const summary = run.summary || {};
-  const taskProfile = run.task_profile || summary.task_profile || {};
-  $("runEmptyState").hidden = true;
-  $("runOverview").hidden = false;
-  $("runTitle").textContent = run.run_id;
-  $("runPresetLabel").textContent = taskProfile.title || taskProfile.name || "Custom task";
-  $("runSummary").textContent = readableSummary(summary.summary) || `Status: ${statusLabel(run.status)}`;
-  $("runProjectLabel").textContent = projectForPath(run.project)?.name
-    || (run.workspace_mode === "selected" ? "Existing folder" : "Scratch workspace");
-}
-
-function renderRun(run) {
-  state.activeKind = "run";
-  state.activeRun = run.run_id;
-  state.activeRecord = run;
-  state.selectedFile = null;
-  updateWorkspaceSummary();
-  const summary = run.summary || {};
-  renderRunSurface(run);
-  $("workspaceTitle").textContent = "Run workspace";
-  $("workspaceSubtitle").textContent = readableSummary(summary.summary) || `The harness is working through ${run.run_id}.`;
-  $("launchNote").textContent = run.status === "running" ? `Running ${run.run_id}` : `Selected ${run.run_id} · ${run.status}`;
-  $("turnCount").textContent = summary.model_calls ? `${summary.model_calls} model calls · ${summary.tool_calls || 0} tool calls` : "running";
-  $("rawOutput").textContent = (run.output || []).join("\n") || "No process output yet.";
-  setStatus(run.status);
-  renderRunActivity(run);
-  const resumeButton = $("resumeRunButton");
-  if (resumeButton) {
-    resumeButton.hidden = run.status !== "interrupted";
-    resumeButton.disabled = run.status === "running";
-  }
-  const stopButton = $("stopRunButton");
-  if (stopButton) {
-    stopButton.hidden = run.status !== "running";
-    stopButton.disabled = run.status !== "running";
-  }
-  const waitingApproval = run.status === "waiting_approval" && run.approval?.status === "pending";
-  const approveButton = $("approveRunButton");
-  const denyButton = $("denyRunButton");
-  if (approveButton) {
-    approveButton.hidden = !waitingApproval;
-    approveButton.disabled = !waitingApproval;
-  }
-  if (denyButton) {
-    denyButton.hidden = !waitingApproval;
-    denyButton.disabled = !waitingApproval;
-  }
-  renderReasoningControl(run);
-  renderApprovalControl(run);
-  renderWorkflow(run.workflow);
-  renderInspector(run);
-  renderActivity(run.events || []);
-  renderFiles(run.files || []);
-  loadRuns().catch(() => {});
-}
-
-function renderSession(session) {
-  state.activeKind = "session";
-  state.activeSession = session.session_id;
-  state.activeRecord = session;
-  state.selectedFile = null;
-  updateWorkspaceSummary();
-  const recordWorkspace = workspaceLabelForRecord(session);
-  $("composerWorkspace").textContent = recordWorkspace;
-  $("workspaceHeadingWorkspace").textContent = recordWorkspace;
-  $("workspaceTitle").textContent = "Local session";
-  $("workspaceSubtitle").textContent = "Ask questions, request changes, and keep the same project context between messages.";
-  $("turnCount").textContent = `${session.model_calls || 0} model calls · ${session.tool_calls || 0} tool calls`;
-  $("rawOutput").textContent = (session.events || []).map((event) => eventCopy(event)).join("\n") || "No process output yet.";
-  setStatus(session.busy ? "thinking" : session.status);
-  renderReasoningControl(session);
-  renderApprovalControl(session);
-  renderWorkflow(session.workflow);
-  renderInspector(session);
-  renderChat(session);
-  renderActivity(session.events || []);
-  renderFiles(session.files || []);
-  loadSessions().catch(() => {});
-}
-
-async function selectRun(runId) {
-  try {
-    const run = await api(`/api/runs/${encodeURIComponent(runId)}`);
-    renderRun(run);
-    setMode("runs");
-    closeMobileSidebar();
-    if (run.status === "running") startRunPolling();
-  } catch (error) {
-    $("workspaceSubtitle").textContent = error.message;
-  }
-}
-
-async function selectSession(sessionId) {
-  try {
-    const session = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
-    renderSession(session);
-    setMode("chats");
-    closeMobileSidebar();
-    if (session.busy) startSessionPolling();
-  } catch (error) {
-    $("workspaceSubtitle").textContent = error.message;
-  }
-}
-
-async function showFile(path) {
-  const activeId = state.activeKind === "session" ? state.activeSession : state.activeRun;
-  if (!activeId || !state.activeKind) return;
-  state.selectedFile = path;
-  $("inspectorTitle").textContent = path;
-  $("inspectorMeta").textContent = "File preview";
-  setDetailsTab("files");
-  $("filePreview").hidden = false;
-  $("filesIndex").hidden = true;
-  $("fileViewer").textContent = "Loading...";
-  if (window.innerWidth <= 1180) setInspectorOpen(true);
-  const collection = state.activeKind === "session" ? "sessions" : "runs";
-  try {
-    const file = await api(`/api/${collection}/${encodeURIComponent(activeId)}/file/${encodeURIComponent(path)}`);
-    $("fileViewer").textContent = file.binary ? `[binary file · ${file.bytes} bytes]` : file.content;
-    $("inspectorMeta").textContent = file.truncated ? "Preview truncated" : "Full preview";
-    document.querySelectorAll(".file-button").forEach((button) => button.classList.toggle("active", decodeURIComponent(button.dataset.file) === path));
-  } catch (error) {
-    $("fileViewer").textContent = error.message;
-    $("inspectorMeta").textContent = "Error";
-  }
-}
-
-function closeFilePreview() {
-  state.selectedFile = null;
-  $("filePreview").hidden = true;
-  $("filesIndex").hidden = false;
-  renderInspector(state.activeRecord);
-  if (state.activeRecord) renderFiles(state.activeRecord.files || []);
-}
-
-async function loadRuns() {
-  const data = await api("/api/runs");
-  renderRunList(data.runs || []);
-}
-
-async function loadProjects() {
-  const data = await api("/api/projects");
-  state.projects = data.projects || [];
-  renderProjectOptions();
-  updateWorkspaceSummary();
-}
-
-function currentSkillOverrides() {
-  return {
-    enabled: [...new Set(state.skillOverrides.enabled || [])],
-    disabled: [...new Set(state.skillOverrides.disabled || [])],
-  };
-}
-
-function skillSelected(item) {
-  const defaults = state.skillDefaults || [];
-  const overrides = currentSkillOverrides();
-  return overrides.enabled.includes(item.name) || (defaults.includes(item.name) && !overrides.disabled.includes(item.name));
-}
-
-function renderSkillControls() {
-  const container = $("skillOverride");
-  const summary = $("skillSummary");
-  if (!container || !summary) return;
-  if (!state.skills.length) {
-    container.innerHTML = '<div class="muted">No skills are available for this project.</div>';
-    summary.textContent = "No skills available";
-    return;
-  }
-  const selected = state.skills.filter(skillSelected);
-  const overrides = currentSkillOverrides();
-  const overrideCount = overrides.enabled.length + overrides.disabled.length;
-  summary.textContent = `${selected.length} selected · ${overrideCount ? `${overrideCount} task override${overrideCount === 1 ? "" : "s"}` : "trusted defaults"}`;
-  container.innerHTML = state.skills.map((item) => `
-    <label class="skill-option" for="skill-${escapeText(item.name)}">
-      <input id="skill-${escapeText(item.name)}" type="checkbox" data-skill-name="${escapeText(item.name)}" ${skillSelected(item) ? "checked" : ""} ${item.activatable === false ? "disabled" : ""}>
-      <span class="skill-option-copy">
-        <span class="skill-option-name">${escapeText(item.name)}</span>
-        <span class="skill-option-description">${escapeText(item.description)}</span>
-      </span>
-      <span class="skill-source">${escapeText(item.source)}</span>
-    </label>`).join("");
-  container.querySelectorAll("input[data-skill-name]").forEach((input) => {
-    input.addEventListener("change", (event) => {
-      const name = event.target.dataset.skillName;
-      const isDefault = state.skillDefaults.includes(name);
-      if (event.target.checked) {
-        state.skillOverrides.disabled = state.skillOverrides.disabled.filter((value) => value !== name);
-        if (!isDefault && !state.skillOverrides.enabled.includes(name)) state.skillOverrides.enabled.push(name);
-      } else {
-        state.skillOverrides.enabled = state.skillOverrides.enabled.filter((value) => value !== name);
-        if (isDefault && !state.skillOverrides.disabled.includes(name)) state.skillOverrides.disabled.push(name);
-      }
-      renderSkillControls();
-    });
-  });
-}
-
-async function loadSkills(projectPath = "") {
-  const query = projectPath ? `?project_path=${encodeURIComponent(projectPath)}` : "";
-  const data = await api(`/api/skills${query}`);
-  state.skills = data.skills || [];
-  state.skillDefaults = data.defaults || [];
-  const names = new Set(state.skills.map((item) => item.name));
-  state.skillOverrides.enabled = (state.skillOverrides.enabled || []).filter((name) => names.has(name));
-  state.skillOverrides.disabled = (state.skillOverrides.disabled || []).filter((name) => names.has(name));
-  renderSkillControls();
-}
-
-function renderSkillResults(results, source = "local") {
-  const container = $("skillResults");
-  if (!container) return;
-  if (!results.length) {
-    container.textContent = source === "remote" ? "No remote recommendations returned." : "No matching local skills.";
-    return;
-  }
-  container.innerHTML = results.map((item) => {
-    const available = state.skills.some((skill) => skill.name === item.name && item.activatable !== false);
-    return `<div class="skill-result">
-      <div class="skill-result-copy"><div class="skill-result-name">${escapeText(item.name)}</div><div class="skill-result-meta">${escapeText(item.source)} · ${escapeText(item.quality || item.description || "Review before use.")}</div></div>
-      ${available ? `<button class="text-button" type="button" data-use-skill="${escapeText(item.name)}">Use</button>` : ""}
-    </div>`;
-  }).join("");
-  container.querySelectorAll("[data-use-skill]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const name = button.dataset.useSkill;
-      if (!state.skillDefaults.includes(name) && !state.skillOverrides.enabled.includes(name)) state.skillOverrides.enabled.push(name);
-      state.skillOverrides.disabled = state.skillOverrides.disabled.filter((value) => value !== name);
-      renderSkillControls();
-    });
-  });
-}
-
-async function searchSkills(source = "local") {
-  const query = $("skillSearch").value.trim();
-  if (!query) {
-    $("skillResults").textContent = "Enter a capability to search for.";
-    $("skillSearch").focus();
-    return;
-  }
-  $("skillResults").textContent = source === "remote" ? "Searching skills.sh…" : "Searching the local catalog…";
-  try {
-    const result = await api("/api/skills/discover", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query,
-        source,
-        project_path: $("workspacePath").value.trim(),
-        ...(source === "remote" ? { confirm_remote: true } : {}),
-      }),
-    });
-    renderSkillResults(result.results || [], source);
-  } catch (error) {
-    $("skillResults").textContent = error.message;
-  }
-}
-
-async function loadSessions() {
-  const data = await api("/api/sessions");
-  const sessions = data.sessions || [];
-  state.sessions = sessions;
-  renderSessionList(sessions);
-}
-
-async function createSession({ announce = false, openProject = false } = {}) {
-  try {
-    const projectPath = $("workspacePath").value.trim();
-    const session = await api("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reasoning_level: state.reasoningLevel, approval_mode: state.approvalMode, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
-    });
-    renderSession(session);
-    await loadSessionsListOnly();
-    if (announce) {
-      const project = projectForPath(projectPath);
-      const location = project ? `in the ${project.name} project` : projectPath ? `in ${shortenPath(projectPath)}` : "in a scratch workspace";
-      setWorkspaceNotice(openProject ? `Opened a new chat ${location}.` : `Started a new chat ${location}.`, "success");
-    }
-    closeMobileSidebar();
-    return true;
-  } catch (error) {
-    $("chatNote").textContent = error.message;
-    setWorkspaceNotice(`Could not open the workspace: ${error.message}`, "error");
-    return false;
-  }
-}
-
-async function createProject() {
-  const input = $("projectName");
-  const name = input.value.trim();
-  if (!name) {
-    setWorkspaceNotice("Name the project first.", "error");
-    input.focus();
-    return;
-  }
-  input.disabled = true;
-  try {
-    const project = await api("/api/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    state.projects.push(project);
-    input.value = "";
-    $("workspacePath").value = project.path;
-    renderProjectOptions();
-    updateWorkspaceSummary();
-    if (await createSession({ announce: true, openProject: true })) closeModal("workspaceDialog");
-  } catch (error) {
-    setWorkspaceNotice(`Could not create the project: ${error.message}`, "error");
   } finally {
-    input.disabled = false;
+    if (busy) busy.disabled = false;
   }
 }
 
-async function selectProject(event) {
-  const path = event.target.value;
-  $("workspacePath").value = path;
-  updateWorkspaceSummary();
-  if (await createSession({ announce: true, openProject: Boolean(path) })) closeModal("workspaceDialog");
+/* ---------------- routing ---------------- */
+function parseHash() {
+  const [kind, id] = (location.hash || "").replace(/^#\/?/, "").split("/");
+  return { kind: kind === "chats" ? "chats" : "runs", id: id ? decodeURIComponent(id) : null };
 }
 
-async function openProject() {
-  if (!$("workspacePath").value.trim()) {
-    setWorkspaceNotice("Enter a project folder first.", "error");
-    $("workspacePath").focus();
+function navigate(kind, id = null) {
+  const hash = id ? `#/${kind}/${encodeURIComponent(id)}` : `#/${kind}`;
+  if (location.hash === hash) route();
+  else location.hash = hash;
+}
+
+async function route() {
+  const { kind, id } = parseHash();
+  state.route = { kind, id };
+  setMode(kind);
+  closeRail();
+  if (kind === "runs") {
+    stopReplay();
+    if (id) await openRun(id);
+    else showEmpty();
+  } else if (id) {
+    await openSession(id);
+  } else {
+    showEmpty();
+  }
+  renderList();
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  $("modeRuns").setAttribute("aria-selected", String(mode === "runs"));
+  $("modeChats").setAttribute("aria-selected", String(mode === "chats"));
+  $("newLabel").textContent = mode === "runs" ? "New run" : "New chat";
+  $("listHead").textContent = mode === "runs" ? "Recent runs" : "Conversations";
+  $("listSearch").placeholder = mode === "runs" ? "Filter runs" : "Filter chats";
+}
+
+function showView(which) {
+  for (const [name, el] of [["run", $("runView")], ["chat", $("chatView")], ["empty", $("emptyView")]]) el.hidden = name !== which;
+  $("replay").hidden = which !== "run";
+  $("chatControls").hidden = which !== "chat";
+  $("runChips").hidden = which !== "run";
+  $("detailsButton").hidden = which === "empty";
+  if (which === "empty") setDrawer(false);
+}
+
+/* ---------------- list ---------------- */
+function renderList() {
+  const list = $("recordList");
+  const filter = state.filter.trim().toLowerCase();
+  if (state.mode === "runs") {
+    const runs = state.runs.filter((r) => !filter || `${runTitle(r)} ${r.run_id} ${r.status}`.toLowerCase().includes(filter));
+    list.innerHTML = runs.length ? runs.map((r) => {
+      const level = r.reasoning_level || (/-(off|low|standard|deep|max)$/.exec(r.run_id) || [])[1] || "";
+      const repaired = r.status === "success" && r.first_pass_passed === false;
+      const meta = [r.elapsed_seconds != null ? clockText(r.elapsed_seconds) : "", r.status.replace(/_/g, " "), r.updated ? timeAgo(Date.now() / 1000 - r.updated) : ""].filter(Boolean).join(" · ");
+      return `<li><button type="button" data-id="${esc(r.run_id)}" aria-current="${state.route.id === r.run_id}">
+        <span class="d ${esc(r.status)}"></span>
+        <span class="t"><b>${esc(runTitle(r))}</b><span>${esc(meta)}</span></span>
+        ${repaired ? '<span class="lv repaired">repaired</span>' : level ? `<span class="lv">${esc(level)}</span>` : ""}
+      </button></li>`;
+    }).join("") : `<li class="none">${state.runs.length ? "Nothing matches." : "No runs yet. Start one and watch it work."}</li>`;
+  } else {
+    const sessions = state.sessions.filter((s) => !filter || chatTitle(s.conversation, "").toLowerCase().includes(filter));
+    list.innerHTML = sessions.length ? sessions.map((s) => {
+      const title = chatTitle(s.conversation, "Empty conversation");
+      const count = (s.conversation || []).length;
+      const stamp = sessionStamp(s.session_id);
+      const status = s.busy ? "thinking" : s.job?.status === "interrupted" || s.job?.status === "failed" ? "interrupted" : s.job?.status === "waiting_approval" ? "waiting_approval" : "ready";
+      const meta = [`${count} message${count === 1 ? "" : "s"}`, stamp ? timeAgo(Date.now() / 1000 - stamp) : ""].filter(Boolean).join(" · ");
+      return `<li><button type="button" data-id="${esc(s.session_id)}" aria-current="${state.route.id === s.session_id}">
+        <span class="d ${esc(status)}"></span><span class="t"><b>${esc(title)}</b><span>${esc(meta)}</span></span></button></li>`;
+    }).join("") : `<li class="none">${state.sessions.length ? "Nothing matches." : "No conversations yet."}</li>`;
+  }
+}
+
+async function loadLists() {
+  const [runs, sessions] = await Promise.all([
+    state.source.runs().catch(() => state.runs),
+    state.source.sessions().catch(() => state.sessions),
+  ]);
+  state.runs = runs || [];
+  state.sessions = (sessions || []).slice().sort((a, b) => String(b.session_id).localeCompare(String(a.session_id)));
+  renderList();
+}
+
+/* ---------------- empty view ---------------- */
+let emptySpecimen = null;
+function showEmpty() {
+  showView("empty");
+  state.run = null;
+  state.session = null;
+  $("crumbs").innerHTML = state.mode === "runs" ? "<b>Runs</b>" : "<b>Chats</b>";
+  if (!emptySpecimen) emptySpecimen = new Specimen($("emptySpecimen"));
+  emptySpecimen.setMode("sleep");
+  const showcase = state.source?.readOnly;
+  $("emptyTitle").textContent = state.mode === "runs" ? "The specimen is resting." : "No conversation open.";
+  $("emptyCopy").textContent = showcase
+    ? "Pick a recorded run on the left to replay it exactly as it happened."
+    : state.mode === "runs" ? "Start a run to watch a small model work through a task, or pick a past run to replay it." : "Open a conversation on the left, or start a new chat.";
+}
+
+/* ---------------- run view ---------------- */
+let runSpecimen = null;
+const feedState = { keys: new Map(), runId: null, evalCount: 0, toolRows: 0, waiting: null, follow: true };
+
+async function fetchAllEvents(run) {
+  for (let guard = 0; guard < 50; guard += 1) {
+    const page = await state.source.runEvents(run.id, run.offset);
+    run.events.push(...(page.events || []));
+    run.offset = page.next ?? run.offset + (page.events || []).length;
+    if (page.complete || !(page.events || []).length) break;
+  }
+}
+
+async function openRun(id) {
+  showView("run");
+  if (!runSpecimen) runSpecimen = new Specimen($("runSpecimen"));
+  const switching = state.run?.id !== id;
+  if (switching) {
+    state.run = { id, state: null, events: [], offset: 0 };
+    resetFeed(id);
+    $("feed").innerHTML = '<div class="waiting">Opening the record…</div>';
+  }
+  const run = state.run;
+  try {
+    const [runState] = await Promise.all([state.source.run(id), fetchAllEvents(run)]);
+    if (state.run !== run) return;
+    run.state = runState;
+  } catch (error) {
+    toast(error.message, "bad");
     return;
   }
-  if (await createSession({ announce: true, openProject: true })) closeModal("workspaceDialog");
+  renderRun();
+  if (state.drawer.open) renderDrawer();
+  if (state.source.readOnly && state.firstShowcaseVisit && TERMINAL.has(run.state.status)) {
+    state.firstShowcaseVisit = false;
+    startReplay();
+  }
 }
 
-async function loadSessionsListOnly() {
-  const data = await api("/api/sessions");
-  state.sessions = data.sessions || [];
-  renderSessionList(state.sessions);
+async function refreshRun() {
+  const run = state.run;
+  if (!run || run.replay) return;
+  try {
+    const [runState] = await Promise.all([state.source.run(run.id), fetchAllEvents(run)]);
+    if (state.run !== run) return;
+    run.state = runState;
+    renderRun();
+    if (state.drawer.open && state.drawer.tab !== "files") renderDrawer();
+  } catch { /* the next tick retries */ }
 }
 
-function startRunPolling() {
-  if (state.runPollTimer) clearInterval(state.runPollTimer);
-  state.runPollTimer = setInterval(async () => {
-    if (!state.activeRun || state.activeKind !== "run") return;
-    try {
-      const run = await api(`/api/runs/${encodeURIComponent(state.activeRun)}`);
-      renderRun(run);
-      if (run.status !== "running") {
-        clearInterval(state.runPollTimer);
-        state.runPollTimer = null;
-        $("runButton").disabled = false;
-      }
-    } catch (error) {
-      $("workspaceSubtitle").textContent = error.message;
+function resetFeed(runId) {
+  feedState.keys = new Map();
+  feedState.runId = runId;
+  feedState.evalCount = 0;
+  feedState.toolRows = 0;
+  feedState.waiting = null;
+  feedState.follow = true;
+  $("feed").innerHTML = "";
+}
+
+function pinFeed() {
+  const feed = $("feed");
+  if (feedState.follow) feed.scrollTop = feed.scrollHeight;
+  $("jumpButton").hidden = feedState.follow || feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+}
+
+function rowSignature(row) {
+  return JSON.stringify([row.state, row.parts, row.detail, row.phaseTag, row.eval?.index]);
+}
+
+function rowHtml(row) {
+  if (row.kind === "eval") {
+    const e = row.eval;
+    const findings = e.findings.length ? `<ul>${e.findings.map((f) => `<li><code>${esc(f.id)}</code>${esc(f.message)}</li>`).join("")}</ul>` : "";
+    const counts = e.total ? `${e.passedCount}/${e.total} checks · ` : "";
+    return `<header><b>${partsHtml(row.parts)}</b><span>evaluation ${e.index} · ${counts}${clockText(row.at)}</span></header>${e.error ? `<p class="dim">${esc(e.error)}</p>` : ""}${findings}`;
+  }
+  const dots = row.state === "active" ? '<span class="dots"><i></i><i></i><i></i></span>' : "";
+  const tag = row.phaseTag ? `<span class="ptag">→ ${esc(row.phaseTag)}</span>` : "";
+  return `<div class="turn">${row.turn ? `T${row.turn}` : ""}</div><div class="ic">${icon(row.icon)}</div>
+    <div class="body"><span class="main">${partsHtml(row.parts)}${dots}${tag}</span>${row.detail ? `<span class="detail">${esc(row.detail)}</span>` : ""}</div>
+    <div class="t">${clockText(row.at)}</div>`;
+}
+
+function rowClass(row, fresh) {
+  return `${row.kind === "eval" ? "eval-row" : "row"} ${row.state}${fresh ? " fresh" : ""}`;
+}
+
+function renderFeed(model, { animate = true } = {}) {
+  const feed = $("feed");
+  if (model.rows.length < feedState.keys.size) resetFeed(state.run?.id);
+  feed.querySelector(".waiting.placeholder")?.remove();
+  if (!feedState.keys.size) feed.innerHTML = "";
+  for (const row of model.rows) {
+    const existing = feedState.keys.get(row.key);
+    const signature = rowSignature(row);
+    if (!existing) {
+      const node = document.createElement("div");
+      node.className = rowClass(row, animate);
+      node.innerHTML = rowHtml(row);
+      feed.insertBefore(node, feedState.waiting && feedState.waiting.parentNode === feed ? feedState.waiting : null);
+      feedState.keys.set(row.key, { node, signature });
+    } else if (existing.signature !== signature) {
+      existing.node.className = rowClass(row, false);
+      existing.node.innerHTML = rowHtml(row);
+      existing.signature = signature;
     }
-  }, 1000);
+  }
+  const thinking = !model.finished && model.now.mode === "think" && model.rows.length;
+  if (thinking) {
+    if (!feedState.waiting) {
+      feedState.waiting = document.createElement("div");
+      feedState.waiting.className = "waiting";
+    }
+    feedState.waiting.innerHTML = `Thinking about turn ${model.turn + 1}<span class="dots"><i></i><i></i><i></i></span>`;
+    feed.appendChild(feedState.waiting);
+  } else if (feedState.waiting) {
+    feedState.waiting.remove();
+  }
+  $("feedCount").textContent = `${model.rows.length} entries`;
+  pinFeed();
 }
 
-function startSessionPolling() {
-  if (state.sessionPollTimer) clearInterval(state.sessionPollTimer);
-  state.sessionPollTimer = setInterval(async () => {
-    if (!state.activeSession || state.activeKind !== "session") return;
-    try {
-      const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}`);
-      renderSession(session);
-      if (!session.busy) {
-        clearInterval(state.sessionPollTimer);
-        state.sessionPollTimer = null;
-        $("sendButton").disabled = isRecoverableJob(session);
-      }
-    } catch (error) {
-      $("chatNote").textContent = error.message;
+function renderChecks(model, animate) {
+  const checks = model.checks;
+  if (!checks) {
+    $("checks").innerHTML = `<div class="ck-empty">${model.finished ? "This run had no external evaluation." : "Checks appear when the agent asks to finish."}</div>`;
+    $("evalLabel").textContent = "not run yet";
+    return;
+  }
+  const flipped = animate && model.evalCount !== feedState.evalCount;
+  const entries = Object.entries(checks).sort((a, b) => Number(a[1]) - Number(b[1]));
+  $("checks").innerHTML = entries.map(([name, ok]) => {
+    const changed = flipped && model.previousChecks && model.previousChecks[name] !== undefined && model.previousChecks[name] !== ok;
+    return `<div class="ck ${ok ? "pass" : "fail"}${changed ? " flip" : ""}" title="${esc(name)}"><i></i><span>${esc(name.replace(/_/g, " "))}</span></div>`;
+  }).join("");
+  const passed = entries.filter(([, ok]) => ok).length;
+  $("evalLabel").textContent = `evaluation ${model.evalCount} · ${passed}/${entries.length}`;
+}
+
+function renderMeter(model, maxTurns) {
+  const cells = maxTurns + EXTENSION_LIMIT;
+  const used = model.calls;
+  const meter = $("meter");
+  meter.style.setProperty("--cells", String(cells));
+  let html = "";
+  for (let i = 0; i < cells; i += 1) {
+    const ext = i >= maxTurns;
+    html += `<i class="${ext ? "ext" : ""}${i < used ? " used" : ""}${i === used - 1 && !model.finished ? " cur" : ""}"></i>`;
+  }
+  meter.innerHTML = html;
+  $("callsUsed").textContent = String(Math.min(used, maxTurns));
+  $("callsMax").textContent = String(maxTurns);
+  $("extNote").textContent = used > maxTurns ? `+${used - maxTurns} extra` : "";
+  $("toolsUsed").textContent = String(model.tools);
+  $("budgetLabel").textContent = model.finished ? "final" : "live";
+}
+
+function renderFiles(files, freshPath) {
+  const list = $("files");
+  if (!files.length) {
+    list.innerHTML = '<li class="none">No files yet.</li>';
+    $("fileCount").textContent = "";
+    return;
+  }
+  list.innerHTML = files.map((f) => `<li class="${f.path === freshPath ? "fresh" : ""}"><button type="button" data-path="${esc(f.path)}">${esc(f.path)}<span>${esc(formatBytes(f.bytes))}</span></button></li>`).join("");
+  $("fileCount").textContent = `${files.length} in project`;
+}
+
+const CHAMBER_COLORS = { think: "var(--live)", tool: "var(--live)", idle: "var(--live)", pass: "var(--live)", wait: "var(--ochre)", fail: "var(--rust)", sleep: "var(--sage)" };
+
+function renderRun(options = {}) {
+  const run = state.run;
+  if (!run?.state) return;
+  const rs = run.state;
+  const replaying = Boolean(run.replay);
+  const events = replaying ? run.events.slice(0, run.replay.index) : run.events;
+  const replayDone = replaying && run.replay.index >= run.events.length;
+  const status = replaying && !replayDone ? "running" : rs.status;
+  const model = buildRunModel(events, {
+    status,
+    firstPassPassed: rs.summary?.first_pass_passed ?? rs.progress?.first_pass_passed,
+    blockedReason: rs.summary?.blocked_reason || rs.progress?.blocked_reason || "",
+  });
+  const animate = options.animate !== false;
+  const maxTurns = Number(rs.max_turns) || 18;
+
+  $("crumbs").innerHTML = `Runs / <b>${esc(runTitle(rs))}</b><code>${esc(rs.run_id)}</code>`;
+  const level = rs.reasoning?.level || rs.summary?.reasoning?.level || "";
+  $("runChips").innerHTML = [
+    level ? `<span class="chip">Reasoning <em>${esc(level)}</em></span>` : "",
+    `<span class="chip">Model <em>${esc(rs.model || rs.provider?.model || "local")}</em></span>`,
+    rs.approval_mode === "confirm" ? '<span class="chip">Tools <em>ask first</em></span>' : "",
+  ].join("");
+
+  // specimen and chamber
+  const mode = model.now.mode;
+  runSpecimen.setMode(mode);
+  const newTools = model.rows.filter((r) => r.state === "active" || r.icon !== "dot").length;
+  if (animate && (newTools > feedState.toolRows || model.evalCount > feedState.evalCount)) runSpecimen.pulse(model.evalCount > feedState.evalCount);
+  feedState.toolRows = newTools;
+  $("chamber").style.setProperty("--chamber", CHAMBER_COLORS[mode] || "var(--live)");
+
+  const live = $("liveLabel");
+  live.textContent = replaying ? (replayDone ? "Replayed" : "Replay") : model.finished ? "Recorded" : rs.status === "waiting_approval" ? "Waiting" : rs.status === "interrupted" ? "Paused" : "Live";
+  live.classList.toggle("still", model.finished || rs.status === "interrupted");
+  $("turnNo").textContent = String(model.turn);
+  $("turnMax").textContent = String(maxTurns);
+  const title = $("nowTitle");
+  title.innerHTML = partsHtml(model.now.title);
+  title.classList.toggle("shimmer", Boolean(model.now.shimmer) && !reducedMotion);
+  const sub = $("nowSub");
+  sub.textContent = model.now.sub || "";
+  sub.className = `sub ${model.now.tone || ""}`;
+  updateClock(model);
+
+  // verdict and actions
+  const verdict = $("verdict");
+  if (model.finished) {
+    const passed = rs.status === "success" || rs.status === "complete" || model.finish?.status === "success";
+    const repaired = passed && (rs.summary?.first_pass_passed === false);
+    $("stamp").className = `stamp ${passed ? "pass" : "fail"}`;
+    $("stamp").textContent = passed ? (repaired ? "Passed · repaired" : model.evalCount ? "Passed" : "Finished") : rs.status === "error" ? "Error" : "Blocked";
+    const seconds = replaying ? (model.lastTs - model.startTs) / 1000 : rs.summary?.elapsed_seconds;
+    $("verdictSub").textContent = `${model.calls} calls · ${model.tools} tools · ${clockText(seconds)}`;
+    verdict.hidden = false;
+  } else {
+    verdict.hidden = true;
+  }
+  const actions = [];
+  if (!replaying && !state.source.readOnly) {
+    if (rs.status === "running") actions.push('<button class="ghost danger" type="button" data-act="stop-run">Stop run</button>');
+    if (rs.status === "interrupted") actions.push('<button class="primary" type="button" data-act="resume-run">Resume run</button>');
+  }
+  $("runActions").innerHTML = actions.join("");
+
+  // approval
+  const approval = rs.approval || {};
+  const pending = !replaying && (rs.status === "waiting_approval" || approval.status === "pending");
+  $("runApproval").hidden = !pending;
+  if (pending) $("runApproval").innerHTML = approvalHtml(approval, "run");
+
+  // phases
+  const phaseIndex = PHASES.indexOf(model.phase);
+  $("phases").innerHTML = PHASES.map((p, i) => {
+    const cls = model.phase === "complete" || i < phaseIndex ? "done" : i === phaseIndex && !model.finished ? "on" : "";
+    return `<div class="ph ${cls}"><i></i>${p}</div>`;
+  }).join("");
+
+  renderFeed(model, { animate });
+  renderChecks(model, animate);
+  feedState.evalCount = model.evalCount;
+  renderMeter(model, maxTurns);
+  const files = replaying
+    ? [...model.files].map(([path, bytes]) => ({ path, bytes }))
+    : (rs.files || []);
+  renderFiles(files, replaying ? [...model.files.keys()].pop() : null);
+  const quote = model.finish?.summary || (model.finished ? rs.summary?.summary : "");
+  $("quoteCard").hidden = !(model.finished && quote);
+  $("quote").textContent = quote || "";
+
+  // replay controls
+  $("replayButton").disabled = rs.status === "running" || !run.events.length;
+  updateScrub();
+  state.lastModel = model;
+}
+
+function updateClock(model = state.lastModel) {
+  const run = state.run;
+  if (!run?.state || !model) return;
+  let seconds;
+  if (run.replay) seconds = run.replay.position;
+  else if (model.finished) seconds = run.state.summary?.elapsed_seconds ?? (model.lastTs - model.startTs) / 1000;
+  else seconds = model.startTs ? (Date.now() - model.startTs) / 1000 : 0;
+  $("clock").textContent = clockText(seconds);
+}
+
+function approvalHtml(approval, scope) {
+  const bits = [];
+  if (approval.path) bits.push(`<code>${esc(approval.path)}</code>`);
+  if (approval.command) bits.push(`<code>${esc(approval.command)}</code>`);
+  if (approval.content_bytes != null) bits.push(`${esc(formatBytes(approval.content_bytes))} of content`);
+  const action = String(approval.action || "a change").replace(/_/g, " ");
+  return `<div><h3>The specimen wants to ${esc(action)}</h3><p>${bits.join(" · ") || "Review the request in Details before deciding."}</p></div>
+    <div class="actions"><button class="ghost danger" type="button" data-act="deny-${scope}">Deny</button><button class="primary" type="button" data-act="approve-${scope}">Approve</button></div>`;
+}
+
+/* ---------------- replay ---------------- */
+function replayTimeline(events) {
+  if (!events.length) return [];
+  const start = Date.parse(events[0].timestamp);
+  const out = [];
+  let lastSecond = null;
+  let k = 0;
+  for (const ev of events) {
+    const second = (Date.parse(ev.timestamp) - start) / 1000;
+    k = second === lastSecond ? k + 1 : 0;
+    lastSecond = second;
+    out.push(second + Math.min(0.9, k * 0.18));
+  }
+  return out;
+}
+
+function startReplay() {
+  const run = state.run;
+  if (!run?.events.length) return;
+  stopReplay(false);
+  const times = replayTimeline(run.events);
+  run.replay = { times, index: 0, position: 0, total: times[times.length - 1] || 0, playing: true, speed: currentSpeed(), last: performance.now(), raf: 0 };
+  resetFeed(run.id);
+  $("replayIcon").setAttribute("d", "M3 1.5h2v9H3zM7 1.5h2v9H7z");
+  $("replayButton").setAttribute("aria-label", "Pause replay");
+  renderRun();
+  run.replay.raf = requestAnimationFrame(replayTick);
+}
+
+function replayTick(now) {
+  const run = state.run;
+  const replay = run?.replay;
+  if (!replay || !replay.playing) return;
+  replay.position += ((now - replay.last) / 1000) * replay.speed;
+  replay.last = now;
+  let advanced = false;
+  while (replay.index < replay.times.length && replay.times[replay.index] <= replay.position) {
+    replay.index += 1;
+    advanced = true;
+  }
+  if (advanced) renderRun();
+  else { updateClock(); updateScrub(); }
+  if (replay.index >= replay.times.length) {
+    finishReplay();
+    return;
+  }
+  replay.raf = requestAnimationFrame(replayTick);
+}
+
+function pauseReplay() {
+  const replay = state.run?.replay;
+  if (!replay) return;
+  replay.playing = false;
+  cancelAnimationFrame(replay.raf);
+  $("replayIcon").setAttribute("d", "M3 1.5v9l7.5-4.5z");
+  $("replayButton").setAttribute("aria-label", "Resume replay");
+}
+
+function resumeReplay() {
+  const replay = state.run?.replay;
+  if (!replay) return;
+  replay.playing = true;
+  replay.last = performance.now();
+  $("replayIcon").setAttribute("d", "M3 1.5h2v9H3zM7 1.5h2v9H7z");
+  $("replayButton").setAttribute("aria-label", "Pause replay");
+  replay.raf = requestAnimationFrame(replayTick);
+}
+
+function finishReplay() {
+  const replay = state.run?.replay;
+  if (!replay) return;
+  replay.playing = false;
+  replay.position = replay.total;
+  renderRun();
+  $("replayIcon").setAttribute("d", "M3 1.5v9l7.5-4.5z");
+  $("replayButton").setAttribute("aria-label", "Replay this run");
+  // Hand back to the recorded state so later polls render normally.
+  state.run.replay = null;
+  updateScrub();
+}
+
+function stopReplay(render = true) {
+  const replay = state.run?.replay;
+  if (!replay) return;
+  cancelAnimationFrame(replay.raf);
+  state.run.replay = null;
+  $("replayIcon").setAttribute("d", "M3 1.5v9l7.5-4.5z");
+  $("replayButton").setAttribute("aria-label", "Replay this run");
+  if (render) {
+    resetFeed(state.run.id);
+    renderRun({ animate: false });
+  }
+}
+
+function seekReplay(fraction) {
+  const run = state.run;
+  if (!run?.events.length) return;
+  if (!run.replay) {
+    startReplay();
+    pauseReplay();
+  }
+  const replay = run.replay;
+  replay.position = Math.max(0, Math.min(1, fraction)) * replay.total;
+  replay.index = replay.times.findIndex((t) => t > replay.position);
+  if (replay.index < 0) replay.index = replay.times.length;
+  resetFeed(run.id);
+  renderRun({ animate: false });
+  if (replay.index >= replay.times.length) finishReplay();
+}
+
+function currentSpeed() {
+  return Number($("speed").querySelector(".on")?.dataset.speed || 4);
+}
+
+function updateScrub() {
+  const replay = state.run?.replay;
+  const fraction = replay ? (replay.total ? replay.position / replay.total : 1) : 1;
+  $("scrubFill").style.width = `${Math.min(100, fraction * 100)}%`;
+  $("scrub").setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+}
+
+/* ---------------- chat view ---------------- */
+let chatSpecimen = null;
+
+async function openSession(id) {
+  showView("chat");
+  try {
+    const session = await state.source.session(id);
+    state.session = session;
+  } catch (error) {
+    toast(error.message, "bad");
+    return;
+  }
+  renderSession({ scroll: true });
+  if (state.drawer.open) renderDrawer();
+}
+
+async function refreshSession() {
+  const current = state.session;
+  if (!current) return;
+  try {
+    const session = await state.source.session(current.session_id);
+    if (state.session?.session_id !== session.session_id) return;
+    const changed = JSON.stringify([session.conversation?.length, session.events?.length, session.busy, session.job?.status, session.status]) !==
+      JSON.stringify([current.conversation?.length, current.events?.length, current.busy, current.job?.status, current.status]);
+    state.session = session;
+    if (changed) {
+      renderSession({ scroll: true });
+      if (state.drawer.open) renderDrawer();
+    } else {
+      updateLiveClock();
     }
-  }, 800);
+  } catch { /* retry on the next tick */ }
+}
+
+function workHtml(rows) {
+  return rows.map((row) => `<div class="row ${row.state}"><div class="turn"></div><div class="ic">${icon(row.icon)}</div><div class="body"><span class="main">${partsHtml(row.parts)}${row.state === "active" ? '<span class="dots"><i></i><i></i><i></i></span>' : ""}</span>${row.detail ? `<span class="detail">${esc(row.detail)}</span>` : ""}</div></div>`).join("");
+}
+
+function renderSession({ scroll = false } = {}) {
+  const s = state.session;
+  if (!s) return;
+  const title = chatTitle(s.conversation, "New conversation");
+  $("crumbs").innerHTML = `Chats / <b>${esc(title)}</b>`;
+  syncChatControls(s);
+  const box = $("chatScroll");
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const conversation = s.conversation || [];
+  const activity = buildChatActivity(s.events);
+  const assistantIndexes = conversation.map((m, i) => (m.role === "assistant" ? i : -1)).filter((i) => i >= 0);
+  const groupFor = new Map();
+  for (let k = 0; k < Math.min(assistantIndexes.length, activity.groups.length); k += 1) {
+    groupFor.set(assistantIndexes[assistantIndexes.length - 1 - k], activity.groups[activity.groups.length - 1 - k]);
+  }
+  const parts = [];
+  if (!conversation.length && !s.busy) {
+    parts.push(`<div class="chat-empty"><div class="specimen" id="chatEmptySpecimen"></div><h1>The specimen is awake.</h1><p>Ask it to inspect the project, explain something, or make a focused change. It works inside <b>${esc(workspaceLabel(s.project))}</b>.</p></div>`);
+  }
+  conversation.forEach((message, index) => {
+    if (message.role === "user") {
+      parts.push(`<div class="msg user"><div class="bubble">${esc(message.content)}</div></div>`);
+      return;
+    }
+    const group = groupFor.get(index);
+    const work = group && group.rows.length
+      ? `<details class="work"><summary>Worked through ${group.rows.length} step${group.rows.length === 1 ? "" : "s"}${group.seconds ? ` · ${clockText(group.seconds)}` : ""}</summary><div class="rows">${workHtml(group.rows)}</div></details>`
+      : "";
+    const error = /^The local session hit an error|^I hit the action limit/.test(message.content || "");
+    parts.push(`<div class="msg agent"><div class="avatar">${MINI_CELL}</div><div>${work}<div class="bubble${error ? " error" : ""}">${esc(message.content)}</div></div></div>`);
+  });
+  if (s.busy) {
+    const live = activity.live;
+    const current = [...live.rows].reverse().find((r) => r.state === "active");
+    const nowLine = current ? partsHtml(current.parts) : "Thinking";
+    parts.push(`<div class="msg agent"><div class="avatar"><div class="specimen" id="chatLiveSpecimen"></div></div><div class="live-work">
+      <div class="now-line"><span class="${reducedMotion ? "" : "shimmer"}">${nowLine}</span><small id="liveClock"></small></div>
+      ${live.rows.length ? `<div class="rows">${workHtml(live.rows)}</div>` : ""}</div></div>`);
+  }
+  $("chatMessages").innerHTML = parts.join("");
+  const liveHost = $("chatLiveSpecimen") || $("chatEmptySpecimen");
+  if (chatSpecimen) chatSpecimen.destroy();
+  chatSpecimen = liveHost ? new Specimen(liveHost, { motes: liveHost.id === "chatLiveSpecimen" ? 3 : 7 }) : null;
+  if (chatSpecimen) {
+    const current = (activity.live.rows || []).some((r) => r.state === "active");
+    chatSpecimen.setMode(liveHost.id === "chatEmptySpecimen" ? "idle" : current ? "tool" : "think");
+  }
+  updateLiveClock();
+  renderJobBanner(s);
+  const busy = Boolean(s.busy);
+  $("chatInput").disabled = busy || state.source.readOnly;
+  $("sendButton").disabled = busy || state.source.readOnly;
+  $("stopJobButton").hidden = !busy || state.source.readOnly;
+  $("composerMeta").textContent = `${workspaceLabel(s.project)} · ${s.provider?.model || s.model || "local model"}`;
+  if (scroll || nearBottom) box.scrollTop = box.scrollHeight;
+}
+
+function updateLiveClock() {
+  const clock = $("liveClock");
+  const started = state.session?.job?.started_at;
+  if (clock && started) clock.textContent = clockText((Date.now() - Date.parse(started)) / 1000);
+}
+
+function renderJobBanner(s) {
+  const banner = $("jobBanner");
+  const job = s.job || {};
+  if (job.status === "waiting_approval" && !s.busy) {
+    banner.hidden = false;
+    banner.className = "job-banner approval";
+    banner.innerHTML = approvalHtml(s.approval || {}, "job");
+    return;
+  }
+  if ((job.status === "interrupted" || job.status === "failed") && !s.busy) {
+    banner.hidden = false;
+    banner.className = `job-banner ${job.status === "failed" ? "bad" : ""}`;
+    banner.innerHTML = `<p><b>${job.status === "failed" ? "The last turn failed." : "The last turn was interrupted."}</b> ${esc(job.error || "")}</p>${state.source.readOnly ? "" : '<button class="primary" type="button" data-act="retry-job">Resume turn</button>'}`;
+    return;
+  }
+  banner.hidden = true;
+  banner.innerHTML = "";
+}
+
+function syncChatControls(s) {
+  fillLevels($("reasoningSelect"), s.reasoning?.level || "standard");
+  $("approvalSelect").value = s.approval_mode || "auto";
+  const locked = Boolean(s.busy) || state.source.readOnly;
+  $("reasoningSelect").disabled = locked;
+  $("approvalSelect").disabled = locked;
+}
+
+function fillLevels(select, value) {
+  const levels = state.levels.length ? state.levels : [{ value: "off", label: "Off" }, { value: "low", label: "Low" }, { value: "standard", label: "Standard" }, { value: "deep", label: "Deep" }, { value: "max", label: "Max" }];
+  if (select.options.length !== levels.length) select.innerHTML = levels.map((l) => `<option value="${esc(l.value)}">${esc(l.label)}</option>`).join("");
+  select.value = value;
 }
 
 async function sendMessage() {
-  const content = $("chatInput").value.trim();
-  if (!content) return;
-  if (!state.activeSession) await createSession();
-  if (!state.activeSession) return;
-  if (isRecoverableJob(state.activeRecord) || state.activeRecord?.job?.status === "waiting_approval") return;
-  $("sendButton").disabled = true;
-  $("chatInput").value = "";
-  try {
-    await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    await selectSession(state.activeSession);
-    startSessionPolling();
-  } catch (error) {
-    $("chatNote").textContent = error.message;
-    $("sendButton").disabled = false;
+  const s = state.session;
+  const input = $("chatInput");
+  const content = input.value.trim();
+  if (!s || !content) return;
+  const ok = await attempt(() => state.source.sendMessage(s.session_id, content), { busy: $("sendButton") });
+  if (ok) {
+    input.value = "";
+    autosize();
+    s.busy = true;
+    s.conversation = [...(s.conversation || []), { role: "user", content }];
+    s.job = { ...(s.job || {}), status: "running", started_at: new Date().toISOString() };
+    renderSession({ scroll: true });
+    loadLists();
   }
 }
 
-async function retryJob() {
-  if (!state.activeSession || !isRecoverableJob(state.activeRecord)) return;
-  const button = $("retryJobButton");
-  button.disabled = true;
-  try {
-    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/retry`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    renderSession(session);
-    startSessionPolling();
-  } catch (error) {
-    button.disabled = false;
-    $("chatNote").textContent = error.message;
-  }
+function autosize() {
+  const input = $("chatInput");
+  input.style.height = "auto";
+  input.style.height = `${Math.min(220, input.scrollHeight)}px`;
 }
 
-async function changeApprovalMode(event) {
-  const nextMode = normalizeApprovalMode(event.target.value);
-  const previousMode = normalizeApprovalMode(state.activeRecord?.approval_mode || state.approvalMode);
-  if (state.activeKind === "run") {
-    renderApprovalControl({ approval_mode: previousMode });
-    setWorkspaceNotice("Tool approvals are fixed for a run. Choose the mode before starting the next one.", "error");
+function workspaceLabel(path) {
+  if (!path) return "the scratch workspace";
+  const project = state.projects.find((p) => comparable(p.path) === comparable(path));
+  if (project) return project.name;
+  if (/chat-sessions|[\\/]runs[\\/]/.test(path)) return "the scratch workspace";
+  const parts = String(path).split(/[\\/]/).filter(Boolean);
+  return parts.slice(-2).join("/");
+}
+
+function comparable(path) {
+  return String(path || "").replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+}
+
+/* ---------------- drawer ---------------- */
+function setDrawer(open, tab) {
+  state.drawer.open = open;
+  if (tab) state.drawer.tab = tab;
+  $("drawer").hidden = !open;
+  $("detailsButton").setAttribute("aria-expanded", String(open));
+  if (open) renderDrawer();
+}
+
+function currentRecord() {
+  if (state.route.kind === "runs" && state.run?.state) return { kind: "run", value: state.run.state };
+  if (state.route.kind === "chats" && state.session) return { kind: "session", value: state.session };
+  return null;
+}
+
+function kv(rows) {
+  return `<dl class="kv">${rows.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+}
+
+function renderDrawer() {
+  for (const button of $("drawer").querySelectorAll(".tabs button")) button.setAttribute("aria-selected", String(button.dataset.tab === state.drawer.tab));
+  for (const pane of $("drawer").querySelectorAll(".pane")) pane.hidden = pane.dataset.pane !== state.drawer.tab;
+  const record = currentRecord();
+  const pane = $(`pane${state.drawer.tab[0].toUpperCase()}${state.drawer.tab.slice(1)}`);
+  if (!record) {
+    pane.innerHTML = '<p class="muted">Open a run or a conversation to inspect it.</p>';
     return;
   }
-  state.approvalMode = nextMode;
-  renderApprovalControl({ approval_mode: nextMode });
-  if (state.activeKind !== "session" || !state.activeSession) return;
-  try {
-    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/settings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ approval_mode: nextMode }),
-    });
-    renderSession(session);
-    setWorkspaceNotice(nextMode === "confirm" ? "The agent will ask before changing the project." : "The agent can use approved tools autonomously.", "success");
-  } catch (error) {
-    state.approvalMode = previousMode;
-    renderApprovalControl({ approval_mode: previousMode });
-    $("chatNote").textContent = error.message;
-    setWorkspaceNotice(`Could not change tool approvals: ${error.message}`, "error");
+  const r = record.value;
+  if (state.drawer.tab === "overview") pane.innerHTML = overviewHtml(record);
+  if (state.drawer.tab === "files") renderFilesPane(pane, record);
+  if (state.drawer.tab === "changes") pane.innerHTML = changesHtml(r.review || {});
+  if (state.drawer.tab === "events") renderEventsPane(pane, record);
+  if (state.drawer.tab === "output") {
+    const lines = record.kind === "run" ? r.output || [] : [r.last_error].filter(Boolean);
+    pane.innerHTML = lines.length ? `<pre class="preview">${esc(lines.join("\n"))}</pre>` : '<p class="muted">No process output recorded.</p>';
   }
 }
 
-async function resolveJobApproval(decision) {
-  if (!state.activeSession) return;
-  const buttons = [$("approveJobButton"), $("denyJobButton")].filter(Boolean);
-  buttons.forEach((button) => { button.disabled = true; });
+function overviewHtml(record) {
+  const r = record.value;
+  const lock = r.workspace_lock || {};
+  const receipt = r.tool_receipt || {};
+  const ctx = r.context || {};
+  const skills = (r.skills?.resolved || []).map((s) => s.name).join(", ");
+  const provider = r.provider || {};
+  const status = (value) => {
+    const tone = ["success", "complete", "ready", "current", "settled", "passed"].includes(value) ? "ok" : ["blocked", "error", "failed", "stale"].includes(value) ? "bad" : "warn";
+    return `<span class="badge ${tone}">${esc(String(value || "unknown").replace(/_/g, " "))}</span>`;
+  };
+  if (record.kind === "run") {
+    const repair = r.summary?.repair_episode || r.progress?.repair_episode;
+    return kv([
+      ["Status", status(r.status)],
+      ["Task", esc(r.task_profile?.title || "Custom task")],
+      ["Gates", r.task_profile?.gates ? esc(Object.entries(r.task_profile.gates).map(([k, v]) => `${k.replace(/_/g, " ")}: ${Array.isArray(v) ? v.join(", ") : v}`).join(" · ")) : "none (custom run)"],
+      ["First pass", r.summary?.first_pass_passed == null ? "" : r.summary.first_pass_passed ? "passed" : "failed"],
+      ["Repair", repair ? esc(`${repair.status} · ${repair.repair_episode_turns ?? 0} turns · ${repair.extension_turns_used ?? 0}/${repair.extension_limit ?? 6} extra`) : ""],
+      ["Model", esc(r.model || provider.model || "")],
+      ["Provider", esc(`${provider.label || provider.provider || ""}${provider.endpoint ? ` · ${provider.endpoint}` : ""}`)],
+      ["Reasoning", esc(r.reasoning?.level || "")],
+      ["Tools", esc(r.approval_mode === "confirm" ? "ask before changes" : "automatic")],
+      ["Calls", esc(`${r.model_calls ?? 0} model · ${r.tool_calls ?? 0} tool`)],
+      ["Workspace", `<code>${esc(r.project || "")}</code>`],
+      ["Workspace lease", esc(`${lock.status || "unknown"}${lock.owner_id ? ` · ${lock.owner_id}` : ""}`)],
+      ["Tool receipt", esc(`${receipt.status || "none"}${receipt.action && receipt.action !== "unknown" ? ` · ${receipt.action}` : ""}`)],
+      ["Context", ctx.compacted ? esc(`compacted · ${ctx.after_tokens} of ${ctx.max_tokens} tokens · ${ctx.dropped_messages} messages folded`) : "not compacted"],
+      ["Skills", esc(skills || "none")],
+      ["Run id", `<code>${esc(r.run_id)}</code>`],
+    ]);
+  }
+  return kv([
+    ["Status", status(r.busy ? "thinking" : r.status)],
+    ["Turn", esc(r.job?.status ? `${r.job.status} · attempt ${r.job.attempt ?? 0}` : "")],
+    ["Model", esc(r.model || provider.model || "")],
+    ["Provider", esc(`${provider.label || provider.provider || ""}${provider.endpoint ? ` · ${provider.endpoint}` : ""}`)],
+    ["Reasoning", esc(r.reasoning?.level || "")],
+    ["Tools", esc(r.approval_mode === "confirm" ? "ask before changes" : "automatic")],
+    ["Calls", esc(`${r.model_calls ?? 0} model · ${r.tool_calls ?? 0} tool`)],
+    ["Workspace", `<code>${esc(r.project || "")}</code>`],
+    ["Workspace lease", esc(`${lock.status || "unknown"}${lock.owner_id ? ` · ${lock.owner_id}` : ""}`)],
+    ["Tool receipt", esc(`${receipt.status || "none"}${receipt.action && receipt.action !== "unknown" ? ` · ${receipt.action}` : ""}`)],
+    ["Recovery", esc(r.recovery ? `${r.recovery.max_retries_per_failure ?? 1} retry per failure` : "")],
+    ["Context", ctx.compacted ? esc(`compacted · ${ctx.after_tokens} of ${ctx.max_tokens} tokens`) : "not compacted"],
+    ["Skills", esc(skills || "none")],
+    ["Session id", `<code>${esc(r.session_id)}</code>`],
+  ]);
+}
+
+async function renderFilesPane(pane, record) {
+  const files = record.value.files || [];
+  const selected = state.drawer.file;
+  pane.innerHTML = files.length
+    ? `<ul class="file-list">${files.map((f) => `<li><button type="button" data-file="${esc(f.path)}" aria-current="${f.path === selected}">${esc(f.path)}<span>${esc(formatBytes(f.bytes))}</span></button></li>`).join("")}</ul><div id="filePreview"></div>`
+    : '<p class="muted">The project has no files yet.</p>';
+  if (!selected || !files.some((f) => f.path === selected)) return;
+  const target = $("filePreview");
+  target.innerHTML = '<p class="muted">Loading…</p>';
   try {
-    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/approval`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
-    });
-    renderSession(session);
-    setWorkspaceNotice(decision === "approve" ? "Change approved. The agent is continuing." : "Change denied. The agent is adapting.", "working");
-    startSessionPolling();
+    const result = record.kind === "run" ? await state.source.runFile(record.value.run_id, selected) : await state.source.sessionFile(record.value.session_id, selected);
+    if (!$("filePreview")) return;
+    $("filePreview").innerHTML = result.binary
+      ? `<p class="muted">Binary file · ${esc(formatBytes(result.bytes))}</p>`
+      : `<h3>${esc(selected)}</h3><pre class="preview">${esc(result.content)}</pre>${result.truncated ? '<p class="muted">Preview truncated.</p>' : ""}`;
   } catch (error) {
-    buttons.forEach((button) => { button.disabled = false; });
-    $("chatNote").textContent = error.message;
-    setWorkspaceNotice(`Could not resolve approval: ${error.message}`, "error");
+    if ($("filePreview")) $("filePreview").innerHTML = `<p class="muted">${esc(error.message)}</p>`;
   }
 }
 
-async function stopJob() {
-  if (!state.activeSession || !state.activeRecord?.busy) return;
-  const button = $("stopJobButton");
-  if (button) button.disabled = true;
-  $("chatNote").textContent = "Stopping the current turn...";
-  try {
-    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/stop`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    renderSession(session);
-  } catch (error) {
-    if (button) button.disabled = false;
-    $("chatNote").textContent = error.message;
-  }
+function changesHtml(review) {
+  const status = review.status || "not_reviewed";
+  const tone = status === "current" ? "ok" : status === "stale" ? "warn" : "";
+  const files = (review.changed_files || []).map((f) => `<li><button type="button" disabled>${esc(f.path)}<span>${esc(f.change || f.status || "")}</span></button></li>`).join("");
+  const diff = String(review.diff || "");
+  const lines = diff.split("\n").map((line) => {
+    const cls = line.startsWith("+++") || line.startsWith("---") ? "meta" : line.startsWith("@@") ? "hunk" : line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
+    return `<span class="${cls}">${esc(line) || " "}</span>`;
+  }).join("");
+  const note = status === "stale" ? "The project changed after this review; the diff below is the last reviewed state." : status === "not_reviewed" ? "No git_diff review has been recorded yet." : "This review matches the current project files.";
+  return `<p><span class="badge ${tone}">${esc(status.replace(/_/g, " "))}</span></p><p class="muted">${esc(note)}</p>${files ? `<ul class="file-list">${files}</ul>` : ""}${diff ? `<pre class="diff">${lines}</pre>` : ""}${review.diff_truncated ? '<p class="muted">Diff truncated.</p>' : ""}`;
 }
 
-async function changeReasoningLevel(event) {
-  const nextLevel = event.target.value;
-  const previousLevel = state.activeRecord?.reasoning?.level || state.reasoningLevel || "standard";
-  state.reasoningLevel = nextLevel;
-  renderReasoningControl({ reasoning: { level: nextLevel } });
-  if (state.activeKind !== "session" || !state.activeSession) return;
-  try {
-    const session = await api(`/api/sessions/${encodeURIComponent(state.activeSession)}/settings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reasoning_level: nextLevel }),
-    });
-    renderSession(session);
-  } catch (error) {
-    state.reasoningLevel = previousLevel;
-    renderReasoningControl(state.activeRecord);
-    $("chatNote").textContent = error.message;
+function renderEventsPane(pane, record) {
+  const events = record.kind === "run" ? state.run?.events || [] : record.value.events || [];
+  const filter = pane.querySelector(".event-filter")?.value || "";
+  const shown = events.filter((e) => e.event !== "session_rehydrated" && (!filter || JSON.stringify(e).toLowerCase().includes(filter.toLowerCase()))).slice(-300);
+  pane.innerHTML = `<input class="event-filter" type="search" placeholder="Filter ${events.length} events" value="${esc(filter)}" aria-label="Filter events">
+    <div class="event-log">${shown.map((e) => {
+      const data = { ...(e.data || {}) };
+      delete data.reasoning_content;
+      return `<details><summary><b>${esc(e.event)}</b><span>${esc((e.timestamp || "").replace("T", " ").replace("+00:00", "Z"))}</span></summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>`;
+    }).join("") || '<p class="muted">No events.</p>'}</div>`;
+  const input = pane.querySelector(".event-filter");
+  input.addEventListener("input", () => {
+    const value = input.value;
+    renderEventsPane(pane, record);
+    const next = pane.querySelector(".event-filter");
+    next.value = value;
+    next.focus();
+    next.setSelectionRange(value.length, value.length);
+  });
+}
+
+/* ---------------- workspace ---------------- */
+function renderWorkspace() {
+  const w = state.workspace;
+  $("workspaceKind").textContent = w.kind === "scratch" ? "Scratch" : w.kind === "project" ? "Project" : "Existing folder";
+  $("workspaceName").textContent = w.kind === "scratch" ? "Temporary folder" : w.name || w.path;
+  $("runTarget").textContent = w.kind === "scratch" ? "Scratch workspace (a fresh folder per run)" : `${w.name || w.path}`;
+}
+
+function renderWorkspaceOptions() {
+  const w = state.workspace;
+  const options = [
+    { kind: "scratch", path: "", name: "Scratch", note: "A fresh disposable folder for every chat or run" },
+    ...state.projects.map((p) => ({ kind: "project", path: p.path, name: p.name, note: `${p.files} file${p.files === 1 ? "" : "s"} · managed project` })),
+  ];
+  if (w.kind === "folder") options.push({ kind: "folder", path: w.path, name: w.name || w.path, note: w.path });
+  $("workspaceOptions").innerHTML = options.map((o, i) => {
+    const current = o.kind === w.kind && (o.kind === "scratch" || comparable(o.path) === comparable(w.path));
+    return `<button type="button" class="option" data-ws="${i}" aria-current="${current}"><span><b>${esc(o.name)}</b><small>${esc(o.note)}</small></span></button>`;
+  }).join("");
+  $("workspaceOptions").dataset.options = JSON.stringify(options);
+}
+
+async function openWorkspaceDialog() {
+  if (!state.source.readOnly) state.projects = (await state.source.projects().catch(() => state.projects)) || [];
+  renderWorkspaceOptions();
+  $("workspaceDialog").showModal();
+}
+
+function chooseWorkspace(option) {
+  state.workspace = { kind: option.kind, path: option.path, name: option.name };
+  saveWorkspace();
+  renderWorkspace();
+  renderWorkspaceOptions();
+  toast(`New chats and runs will use ${option.kind === "scratch" ? "a scratch folder" : option.name}.`);
+}
+
+/* ---------------- new run ---------------- */
+function presetByName(name) {
+  return state.tasks.find((t) => t.name === name);
+}
+
+async function openRunDialog() {
+  if (!state.tasks.length) state.tasks = (await state.source.tasks().catch(() => [])) || [];
+  $("presetSelect").innerHTML = state.tasks.map((t) => `<option value="${esc(t.name)}">${esc(t.title)}</option>`).join("") + '<option value="">Custom task</option>';
+  if (!$("presetSelect").dataset.touched && state.tasks.length) $("presetSelect").value = state.tasks[0].name;
+  applyPreset();
+  fillLevels($("runReasoning"), $("runReasoning").value || "standard");
+  await loadSkillsForWorkspace();
+  renderWorkspace();
+  $("startRunButton").disabled = state.source.readOnly;
+  $("runDialog").showModal();
+}
+
+function applyPreset() {
+  const task = presetByName($("presetSelect").value);
+  $("presetDescription").textContent = task ? task.description || "" : "Describe any task. Custom runs are not graded unless you keep gates on with a preset.";
+  if (task) {
+    $("taskText").value = task.content;
+    $("runGated").checked = true;
+    $("runGated").disabled = false;
+  } else {
+    if (presetByName($("taskText").dataset.preset || "")) $("taskText").value = "";
+    $("runGated").checked = false;
+    $("runGated").disabled = true;
   }
+  $("taskText").dataset.preset = $("presetSelect").value;
+}
+
+async function loadSkillsForWorkspace() {
+  state.skills = (await state.source.skills(state.workspace.path).catch(() => state.skills)) || state.skills;
+  const defaults = new Set(state.skills.defaults || []);
+  $("skillList").innerHTML = (state.skills.skills || []).map((s) => `<label><input type="checkbox" data-skill="${esc(s.name)}" ${defaults.has(s.name) ? "checked" : ""}><span><b>${esc(s.name)}</b> · ${esc(s.description || "")} <span class="dim">${esc(s.source || "")}</span></span></label>`).join("") || '<p class="dim">No skills available.</p>';
+  updateSkillSummary();
+}
+
+function skillOverrides() {
+  const defaults = new Set(state.skills.defaults || []);
+  const enabled = [];
+  const disabled = [];
+  for (const box of $("skillList").querySelectorAll("input[data-skill]")) {
+    const name = box.dataset.skill;
+    if (box.checked && !defaults.has(name)) enabled.push(name);
+    if (!box.checked && defaults.has(name)) disabled.push(name);
+  }
+  return { enabled, disabled };
+}
+
+function updateSkillSummary() {
+  const checked = [...$("skillList").querySelectorAll("input[data-skill]:checked")].map((b) => b.dataset.skill);
+  $("skillsSummary").textContent = checked.length ? checked.join(", ") : "none selected";
+}
+
+async function searchSkills(remote) {
+  const query = $("skillQuery").value.trim();
+  if (!query) return;
+  if (remote && !confirm("Search skills.sh? This sends your query to an external site. Results are recommendations only; nothing is installed or activated.")) return;
+  const result = await attempt(() => state.source.discoverSkills({ query, source: remote ? "remote" : "local", confirm_remote: remote, project_path: state.workspace.path }));
+  if (!result) return;
+  $("skillResults").innerHTML = (result.results || []).map((r) => `<div><b>${esc(r.name || r.title || "skill")}</b> · ${esc(r.description || r.summary || "")}${r.url ? ` <span class="dim">${esc(r.url)}</span>` : ""}</div>`).join("") || '<div class="dim">No matches.</div>';
 }
 
 async function startRun() {
-  const taskText = $("taskText").value.trim();
-  if (!taskText) {
-    $("launchNote").textContent = "Give the agent a task first.";
-    setWorkspaceNotice("Add a task before starting the run.", "error");
-    return;
-  }
-  const gated = $("taskPreset").value !== "custom" && $("useGates").checked;
-  const taskName = $("taskPreset").value !== "custom" ? $("taskPreset").value : null;
-  const projectPath = $("workspacePath").value.trim();
-  const target = projectPath ? `the selected project ${shortenPath(projectPath)}` : "an isolated workspace";
-  $("runButton").disabled = true;
-  $("launchNote").textContent = `Starting in ${target}...`;
-  setWorkspaceNotice(`Starting a run in ${target}.`, "working");
-  try {
-    const result = await api("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_text: taskText, task_name: taskName, gated, reasoning_level: state.reasoningLevel, approval_mode: state.approvalMode, project_path: projectPath, skill_overrides: currentSkillOverrides() }),
-    });
-    state.activeKind = "run";
-    state.activeRun = result.run_id;
-    $("launchNote").textContent = `Running ${result.run_id}`;
-    await selectRun(result.run_id);
-    setWorkspaceNotice(`Run started in ${target}.`, "success");
-    closeModal("runDialog");
-    startRunPolling();
-  } catch (error) {
-    $("launchNote").textContent = error.message;
-    setWorkspaceNotice(`Could not start the run: ${error.message}`, "error");
-    $("runButton").disabled = false;
-  }
+  const task = $("taskText").value.trim();
+  if (!task) { toast("Write a task first.", "bad"); return; }
+  const preset = presetByName($("presetSelect").value);
+  const payload = {
+    task_text: task,
+    gated: $("runGated").checked,
+    reasoning_level: $("runReasoning").value,
+    approval_mode: $("runApproval").value,
+    project_path: state.workspace.path,
+    skill_overrides: skillOverrides(),
+  };
+  if (preset && $("runGated").checked) payload.task_name = preset.name;
+  const result = await attempt(() => state.source.startRun(payload), { busy: $("startRunButton") });
+  if (!result) return;
+  $("runDialog").close();
+  state.runs.unshift({ run_id: result.run_id, status: "running", task_profile: result.task_profile, reasoning_level: payload.reasoning_level });
+  navigate("runs", result.run_id);
 }
 
-async function resumeRun() {
-  if (!state.activeRun) return;
-  const button = $("resumeRunButton");
-  if (button) button.disabled = true;
-  $("launchNote").textContent = `Resuming ${state.activeRun}...`;
-  setWorkspaceNotice(`Resuming ${state.activeRun}.`, "working");
-  try {
-    const result = await api(`/api/runs/${encodeURIComponent(state.activeRun)}/resume`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    await selectRun(result.run_id);
-    setWorkspaceNotice(`Run resumed in ${shortenPath(result.project || "the existing project")}.`, "success");
-    startRunPolling();
-  } catch (error) {
-    if (button) button.disabled = false;
-    $("launchNote").textContent = error.message;
-    setWorkspaceNotice(`Could not resume the run: ${error.message}`, "error");
-  }
+/* ---------------- provider ---------------- */
+function renderProvider() {
+  const p = state.provider || {};
+  $("providerModel").textContent = p.provider === "openai_compatible" ? p.model || "API model" : p.model || "Local model";
+  $("providerEndpoint").textContent = (p.endpoint || "").replace(/^https?:\/\//, "").replace(/\/v1\/chat\/completions$/, "") || (state.source?.readOnly ? "showcase recording" : "local");
+  $("providerDot").className = p.provider === "openai_compatible" ? "remote" : "";
 }
 
-async function stopRun() {
-  if (!state.activeRun) return;
-  const button = $("stopRunButton");
-  if (button) button.disabled = true;
-  $("launchNote").textContent = `Stopping ${state.activeRun}...`;
-  setWorkspaceNotice(`Stopping ${state.activeRun}.`, "working");
-  try {
-    const result = await api(`/api/runs/${encodeURIComponent(state.activeRun)}/stop`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    await selectRun(result.run_id);
-    setWorkspaceNotice(`Run stopped. Its saved checkpoint is available to resume.`, "success");
-  } catch (error) {
-    if (button) button.disabled = false;
-    $("launchNote").textContent = error.message;
-    setWorkspaceNotice(`Could not stop the run: ${error.message}`, "error");
-  }
-}
-
-async function resolveRunApproval(decision) {
-  if (!state.activeRun) return;
-  const buttons = [$("approveRunButton"), $("denyRunButton")].filter(Boolean);
-  buttons.forEach((button) => { button.disabled = true; });
-  try {
-    const result = await api(`/api/runs/${encodeURIComponent(state.activeRun)}/approval`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
-    });
-    await selectRun(result.run_id);
-    setWorkspaceNotice(decision === "approve" ? "Change approved. The run is continuing." : "Change denied. The run is adapting.", "working");
-    startRunPolling();
-  } catch (error) {
-    buttons.forEach((button) => { button.disabled = false; });
-    $("launchNote").textContent = error.message;
-    setWorkspaceNotice(`Could not resolve approval: ${error.message}`, "error");
-  }
-}
-
-async function loadTasks() {
-  const data = await api("/api/tasks");
-  state.tasks = data.tasks || [];
-  const select = $("taskPreset");
-  select.innerHTML = '<option value="custom">Custom task</option>' + state.tasks.map((task) => `<option value="${escapeText(task.name)}">${escapeText(task.title)}</option>`).join("");
-  if (state.tasks.length) {
-    select.value = state.tasks[0].name;
-    $("taskText").value = state.tasks[0].content;
-    renderTaskPresetDescription(state.tasks[0]);
-  } else {
-    renderTaskPresetDescription(null);
-  }
-}
-
-function renderTaskPresetDescription(task) {
-  const description = $("taskPresetDescription");
-  if (!description) return;
-  description.textContent = task?.description || (task ? "Built-in task preset." : "Custom tasks run with no preset-specific completion gates.");
-}
-
-async function loadReasoningLevels() {
-  try {
-    const data = await api("/api/reasoning-levels");
-    state.reasoningOptions = data.levels || [];
-  } catch (error) {
-    state.reasoningOptions = FALLBACK_REASONING_OPTIONS;
-  }
-  renderReasoningControl();
-}
-
-async function loadProvider() {
-  try {
-    const data = await api("/api/provider");
-    state.provider = data.provider || state.provider;
-  } catch (error) {
-    // Keep the local default visible if an older server does not expose provider settings yet.
-  }
-  renderProviderControl();
-}
-
-function changeProviderType() {
-  const next = normalizeProvider($("providerType").value);
-  const fields = $("remoteProviderFields");
-  if (fields) fields.hidden = next !== "openai_compatible";
-  const status = $("providerStatus");
-  if (status) status.textContent = next === "local"
-    ? "Local model selected. The next chat or run stays on this machine."
-    : "Remote model selected. Enter an endpoint, model name, and API key.";
+function openProviderDialog() {
+  const p = state.provider || {};
+  const remote = p.provider === "openai_compatible";
+  for (const input of document.querySelectorAll('input[name="provider"]')) input.checked = input.value === (remote ? "openai_compatible" : "local");
+  $("remoteFields").hidden = !remote;
+  $("providerEndpointInput").value = remote ? p.endpoint || "" : "";
+  $("providerModelInput").value = remote ? p.model || "" : "";
+  $("providerKeyInput").value = "";
+  $("providerStatus").textContent = remote ? (p.has_api_key ? "A key is loaded in memory for this server process." : "No key is loaded yet.") : "The local llama.cpp model stays the default.";
+  $("saveProviderButton").disabled = state.source.readOnly;
+  $("providerDialog").showModal();
 }
 
 async function saveProvider() {
-  const button = $("saveProviderButton");
-  const provider = normalizeProvider($("providerType").value);
-  const payload = {
-    provider,
-    endpoint: $("providerEndpoint").value.trim(),
-    model: $("providerModel").value.trim(),
-    api_key: $("providerApiKey").value,
-  };
-  if (state.activeKind === "session" && state.activeSession) payload.session_id = state.activeSession;
-  if (button) button.disabled = true;
-  try {
-    const result = await api("/api/provider", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    state.provider = result.provider || state.provider;
-    renderProviderControl(result.session || state.activeRecord);
-    if (result.session) renderSession(result.session);
-    closeModal("providerDialog");
-    const scope = result.session ? "this chat and new runs" : "new chats and runs";
-    setWorkspaceNotice(`${provider === "local" ? "Local model" : "Remote API"} selected for ${scope}.`, "success");
-  } catch (error) {
-    $("providerStatus").textContent = error.message;
-    setWorkspaceNotice(`Could not configure the model provider: ${error.message}`, "error");
-  } finally {
-    if (button) button.disabled = false;
+  const provider = document.querySelector('input[name="provider"]:checked')?.value || "local";
+  const payload = { provider };
+  if (provider !== "local") {
+    payload.endpoint = $("providerEndpointInput").value.trim();
+    payload.model = $("providerModelInput").value.trim();
+    const key = $("providerKeyInput").value.trim();
+    if (key) payload.api_key = key;
   }
+  if (state.route.kind === "chats" && state.session) payload.session_id = state.session.session_id;
+  const result = await attempt(() => state.source.configureProvider(payload), { busy: $("saveProviderButton") });
+  $("providerKeyInput").value = "";
+  if (!result) return;
+  state.provider = result.provider;
+  renderProvider();
+  if (result.session) { state.session = result.session; renderSession(); }
+  $("providerDialog").close();
+  toast(provider === "local" ? "Back on the local model." : `Using ${state.provider.model} through the API.`);
 }
 
-function closeMobileSidebar() {
-  if (window.innerWidth > 760) return;
-  $("layout").classList.remove("sidebar-open");
-  $("sidebarToggle").setAttribute("aria-expanded", "false");
-  syncResponsiveInert();
+/* ---------------- actions ---------------- */
+async function createChat() {
+  const session = await attempt(() => state.source.createSession({
+    reasoning_level: $("reasoningSelect").value || "standard",
+    approval_mode: $("approvalSelect").value || "auto",
+    project_path: state.workspace.path,
+  }), { busy: $("newButton") });
+  if (!session) return;
+  state.sessions.unshift(session);
+  navigate("chats", session.session_id);
 }
 
-function toggleMobileSidebar() {
-  const open = $("layout").classList.toggle("sidebar-open");
-  $("sidebarToggle").setAttribute("aria-expanded", String(open));
-  syncResponsiveInert();
-}
-
-function syncResponsiveInert() {
-  const mobile = window.innerWidth <= 760;
-  $("sidebar").toggleAttribute("inert", mobile && !$("layout").classList.contains("sidebar-open"));
-}
-
-function setInspectorOpen(open) {
-  $("layout").classList.toggle("details-open", open);
-  $("inspectorToggle").setAttribute("aria-expanded", String(open));
-  $("rightRail").setAttribute("aria-hidden", String(!open));
-  $("rightRail").toggleAttribute("inert", !open);
-  $("detailsBackdrop").hidden = !open;
-  if (open) setDetailsTab(state.detailsTab);
-}
-
-function toggleInspector() {
-  setInspectorOpen(!$("layout").classList.contains("details-open"));
-}
-
-$("taskPreset").addEventListener("change", () => {
-  const task = state.tasks.find((item) => item.name === $("taskPreset").value);
-  if (task) {
-    $("taskText").value = task.content;
-    $("useGates").checked = true;
-    renderTaskPresetDescription(task);
-  } else {
-    $("taskText").value = "";
-    $("useGates").checked = false;
-    renderTaskPresetDescription(null);
+async function onAction(act) {
+  const run = state.run;
+  const s = state.session;
+  if (act === "stop-run" && run) {
+    if (await attempt(() => state.source.stopRun(run.id))) toast("Stopping the run. The project and audit trail are kept.");
+  } else if (act === "resume-run" && run) {
+    if (await attempt(() => state.source.resumeRun(run.id))) toast("Resuming from the last checkpoint.");
+  } else if ((act === "approve-run" || act === "deny-run") && run) {
+    if (await attempt(() => state.source.resolveRunApproval(run.id, act === "approve-run" ? "approve" : "deny"))) toast(act === "approve-run" ? "Approved." : "Denied. The model will be told.");
+  } else if ((act === "approve-job" || act === "deny-job") && s) {
+    if (await attempt(() => state.source.resolveJobApproval(s.session_id, act === "approve-job" ? "approve" : "deny"))) toast(act === "approve-job" ? "Approved." : "Denied. The model will be told.");
+  } else if (act === "retry-job" && s) {
+    await attempt(() => state.source.retryJob(s.session_id));
   }
-});
-$("newChatButton").addEventListener("click", () => createSession({ announce: true }));
-$("newRunButton").addEventListener("click", () => openModal("runDialog", "newRunButton"));
-$("emptyNewRunButton").addEventListener("click", () => openModal("runDialog", "emptyNewRunButton"));
-$("workspaceDialogTrigger").addEventListener("click", () => openModal("workspaceDialog", "workspaceDialogTrigger"));
-$("runButton").addEventListener("click", startRun);
-$("sendButton").addEventListener("click", sendMessage);
-$("runActivityTimeline").addEventListener("scroll", updateActivityJumpButton);
-$("runActivityJump").addEventListener("click", () => {
-  const timeline = $("runActivityTimeline");
-  timeline.scrollTop = timeline.scrollHeight;
-  updateActivityJumpButton();
-});
-$("stopJobButton").addEventListener("click", stopJob);
-$("retryJobButton").addEventListener("click", retryJob);
-$("reasoningLevel").addEventListener("change", changeReasoningLevel);
-$("approvalMode").addEventListener("change", changeApprovalMode);
-$("providerButton").addEventListener("click", () => openModal("providerDialog", "providerButton"));
-$("providerType").addEventListener("change", changeProviderType);
-$("saveProviderButton").addEventListener("click", saveProvider);
-$("approveJobButton").addEventListener("click", () => resolveJobApproval("approve"));
-$("denyJobButton").addEventListener("click", () => resolveJobApproval("deny"));
-$("workspacePath").addEventListener("input", updateWorkspaceSummary);
-$("projectSelect").addEventListener("change", selectProject);
-$("createProjectButton").addEventListener("click", createProject);
-$("projectName").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") createProject();
-});
-$("openProjectButton").addEventListener("click", openProject);
-$("clearWorkspace").addEventListener("click", () => {
-  $("workspacePath").value = "";
-  $("projectSelect").value = "";
-  updateWorkspaceSummary();
-  setWorkspaceNotice("Using a scratch workspace. The next chat gets a fresh folder.", "success");
-  $("launchNote").textContent = "Runs will use a scratch workspace.";
-});
-$("refreshRuns").addEventListener("click", () => loadRuns().catch(() => {}));
-$("resetSkillsButton").addEventListener("click", () => {
-  state.skillOverrides = { enabled: [], disabled: [] };
-  renderSkillControls();
-});
-$("findSkillsButton").addEventListener("click", () => {
-  const finder = $("skillFinder");
-  const open = finder.hidden;
-  finder.hidden = !open;
-  $("findSkillsButton").setAttribute("aria-expanded", String(open));
-  if (open) $("skillSearch").focus();
-});
-$("searchSkillsButton").addEventListener("click", () => searchSkills("local"));
-$("searchRemoteSkillsButton").addEventListener("click", () => searchSkills("remote"));
-$("skillSearch").addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    searchSkills("local");
+  if (run) refreshRun();
+  if (s) refreshSession();
+}
+
+/* ---------------- mobile rail ---------------- */
+function openRail() { $("rail").classList.add("open"); $("scrim").hidden = false; }
+function closeRail() { $("rail").classList.remove("open"); $("scrim").hidden = true; }
+
+/* ---------------- polling ---------------- */
+let tickCount = 0;
+function tick() {
+  tickCount += 1;
+  if (document.hidden || !state.source) return;
+  const run = state.run;
+  if (state.route.kind === "runs" && run?.state && !run.replay) {
+    if (!TERMINAL.has(run.state.status) || run.state.status === "waiting_approval") refreshRun();
+    if (state.lastModel && !state.lastModel.finished) updateClock();
   }
-});
-$("sessionSearch").addEventListener("input", (event) => {
-  state.sessionFilter = event.target.value;
-  renderSessionList();
-});
-$("chatInput").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && event.shiftKey) return;
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-    event.preventDefault();
-    sendMessage();
-  }
-});
-$("sidebarToggle").addEventListener("click", toggleMobileSidebar);
-$("mobileWorkspaceButton").addEventListener("click", () => openModal("workspaceDialog", "mobileWorkspaceButton"));
-$("inspectorToggle").addEventListener("click", toggleInspector);
-$("stopRunButton").addEventListener("click", stopRun);
-$("resumeRunButton").addEventListener("click", resumeRun);
-$("approveRunButton").addEventListener("click", () => resolveRunApproval("approve"));
-$("denyRunButton").addEventListener("click", () => resolveRunApproval("deny"));
-$("runDetailsButton").addEventListener("click", () => setInspectorOpen(true));
-$("closeInspector").addEventListener("click", () => setInspectorOpen(false));
-$("detailsBackdrop").addEventListener("click", () => setInspectorOpen(false));
-document.querySelectorAll(".details-tab").forEach((button) => {
-  button.addEventListener("click", () => setDetailsTab(button.dataset.detailsTab));
-  button.addEventListener("keydown", (event) => {
-    if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-    event.preventDefault();
-    const tabs = ["overview", "workflow", "review", "activity", "files"];
-    const offset = event.key === "ArrowRight" ? 1 : -1;
-    const nextIndex = (tabs.indexOf(state.detailsTab) + offset + tabs.length) % tabs.length;
-    setDetailsTab(tabs[nextIndex], { focus: true });
+  if (state.route.kind === "chats" && state.session && (state.session.busy || state.session.job?.status === "running")) refreshSession();
+  if (!state.source.readOnly && tickCount % 5 === 0) loadLists();
+}
+
+/* ---------------- wiring ---------------- */
+function wire() {
+  window.addEventListener("hashchange", route);
+  $("modeRuns").addEventListener("click", () => navigate("runs", state.run?.id || null));
+  $("modeChats").addEventListener("click", () => navigate("chats", state.session?.session_id || null));
+  $("newButton").addEventListener("click", () => (state.mode === "runs" ? openRunDialog() : createChat()));
+  $("emptyRun").addEventListener("click", () => { setMode("runs"); openRunDialog(); });
+  $("emptyChat").addEventListener("click", () => { if (state.source.readOnly) navigate("chats"); else createChat(); });
+  $("listSearch").addEventListener("input", (e) => { state.filter = e.target.value; renderList(); });
+  $("refreshList").addEventListener("click", () => loadLists());
+  $("recordList").addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-id]");
+    if (button) navigate(state.mode, button.dataset.id);
   });
-});
-$("chatsModeButton").addEventListener("click", () => setMode("chats"));
-$("runsModeButton").addEventListener("click", () => setMode("runs"));
-[$("chatsModeButton"), $("runsModeButton")].forEach((button) => button.addEventListener("keydown", (event) => {
-  if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-  event.preventDefault();
-  setMode(state.mode === "chats" ? "runs" : "chats", { focus: true });
-}));
-$("workspaceDialog").addEventListener("close", () => restoreModalFocus("workspaceDialog"));
-$("runDialog").addEventListener("close", () => restoreModalFocus("runDialog"));
-$("providerDialog").addEventListener("close", () => restoreModalFocus("providerDialog"));
-$("workspaceDialog").addEventListener("click", (event) => {
-  if (event.target === $("workspaceDialog")) closeModal("workspaceDialog");
-});
-$("runDialog").addEventListener("click", (event) => {
-  if (event.target === $("runDialog")) closeModal("runDialog");
-});
-$("providerDialog").addEventListener("click", (event) => {
-  if (event.target === $("providerDialog")) closeModal("providerDialog");
-});
-$("closeFilePreview").addEventListener("click", closeFilePreview);
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && $("layout").classList.contains("details-open")) setInspectorOpen(false);
-});
-window.addEventListener("resize", syncResponsiveInert);
+  $("menuButton").addEventListener("click", openRail);
+  $("scrim").addEventListener("click", closeRail);
+  $("workspaceButton").addEventListener("click", openWorkspaceDialog);
+  $("providerButton").addEventListener("click", openProviderDialog);
+  $("detailsButton").addEventListener("click", () => setDrawer(!state.drawer.open));
+  $("closeDrawer").addEventListener("click", () => setDrawer(false));
+  $("drawer").querySelector(".tabs").addEventListener("click", (e) => {
+    const tab = e.target.closest("button[data-tab]")?.dataset.tab;
+    if (tab) { state.drawer.tab = tab; renderDrawer(); }
+  });
+  $("drawer").addEventListener("click", (e) => {
+    const file = e.target.closest("button[data-file]")?.dataset.file;
+    if (file) { state.drawer.file = file; renderDrawer(); }
+  });
+  $("files").addEventListener("click", (e) => {
+    const path = e.target.closest("button[data-path]")?.dataset.path;
+    if (path) { state.drawer.file = path; setDrawer(true, "files"); }
+  });
+  document.addEventListener("click", (e) => {
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (act) onAction(act);
+  });
+  $("jumpButton").addEventListener("click", () => { feedState.follow = true; pinFeed(); });
+  $("feed").addEventListener("scroll", () => {
+    const feed = $("feed");
+    feedState.follow = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+    $("jumpButton").hidden = feedState.follow;
+  });
+  // Keep the newest activity in view when layout changes re-wrap the rows.
+  new ResizeObserver(() => pinFeed()).observe($("feed"));
 
-async function bootstrap() {
-  syncResponsiveInert();
-  try {
-    await loadProjects();
-    await loadSkills($("workspacePath").value.trim());
-    await Promise.all([loadReasoningLevels(), loadProvider(), loadTasks(), loadRuns(), loadSessions()]);
-  } catch (error) {
-    $("launchNote").textContent = error.message;
+  // replay
+  $("replayButton").addEventListener("click", () => {
+    const replay = state.run?.replay;
+    if (!replay) startReplay();
+    else if (replay.playing) pauseReplay();
+    else resumeReplay();
+  });
+  $("speed").addEventListener("click", (e) => {
+    const button = e.target.closest("button[data-speed]");
+    if (!button) return;
+    for (const b of $("speed").children) b.classList.toggle("on", b === button);
+    if (state.run?.replay) state.run.replay.speed = Number(button.dataset.speed);
+  });
+  const seekFromPointer = (e) => {
+    const box = $("scrub").getBoundingClientRect();
+    seekReplay((e.clientX - box.left) / box.width);
+  };
+  $("scrub").addEventListener("click", seekFromPointer);
+  $("scrub").addEventListener("keydown", (e) => {
+    const replay = state.run?.replay;
+    const fraction = replay ? replay.position / (replay.total || 1) : 1;
+    if (e.key === "ArrowLeft") { seekReplay(fraction - 0.05); e.preventDefault(); }
+    if (e.key === "ArrowRight") { seekReplay(fraction + 0.05); e.preventDefault(); }
+  });
+
+  // chat
+  $("composer").addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
+  $("chatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); }
+  });
+  $("chatInput").addEventListener("input", autosize);
+  $("stopJobButton").addEventListener("click", async () => {
+    if (state.session && (await attempt(() => state.source.stopJob(state.session.session_id)))) refreshSession();
+  });
+  $("reasoningSelect").addEventListener("change", async (e) => {
+    if (!state.session) return;
+    const updated = await attempt(() => state.source.sessionSettings(state.session.session_id, { reasoning_level: e.target.value }));
+    if (updated) { state.session = updated; renderSession(); }
+  });
+  $("approvalSelect").addEventListener("change", async (e) => {
+    if (!state.session) return;
+    const updated = await attempt(() => state.source.sessionSettings(state.session.session_id, { approval_mode: e.target.value }));
+    if (updated) { state.session = updated; renderSession(); }
+  });
+
+  // dialogs
+  $("presetSelect").addEventListener("change", () => { $("presetSelect").dataset.touched = "1"; applyPreset(); });
+  $("startRunButton").addEventListener("click", startRun);
+  $("skillList").addEventListener("change", updateSkillSummary);
+  $("skillSearchButton").addEventListener("click", () => searchSkills(false));
+  $("skillRemoteButton").addEventListener("click", () => searchSkills(true));
+  $("workspaceOptions").addEventListener("click", (e) => {
+    const index = e.target.closest("button[data-ws]")?.dataset.ws;
+    if (index == null) return;
+    const options = JSON.parse($("workspaceOptions").dataset.options || "[]");
+    if (options[index]) chooseWorkspace(options[index]);
+  });
+  $("createProjectButton").addEventListener("click", async () => {
+    const name = $("projectName").value.trim();
+    if (!name) return;
+    const project = await attempt(() => state.source.createProject(name), { busy: $("createProjectButton") });
+    if (!project) return;
+    $("projectName").value = "";
+    state.projects.push(project);
+    chooseWorkspace({ kind: "project", path: project.path, name: project.name });
+  });
+  $("useFolderButton").addEventListener("click", () => {
+    const path = $("folderPath").value.trim();
+    if (!path) return;
+    if (state.source.readOnly) { toast(new ShowcaseError().message, "bad"); return; }
+    const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
+    chooseWorkspace({ kind: "folder", path, name });
+  });
+  for (const input of document.querySelectorAll('input[name="provider"]')) {
+    input.addEventListener("change", () => { $("remoteFields").hidden = input.value === "local" ? input.checked : !input.checked; });
   }
-  updateWorkspaceSummary();
-  setMode("chats");
-  setDetailsTab("overview");
+  $("saveProviderButton").addEventListener("click", saveProvider);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.drawer.open && !document.querySelector("dialog[open]")) setDrawer(false);
+  });
+  setInterval(tick, 1200);
+}
+
+/* ---------------- bootstrap ---------------- */
+async function bootstrap() {
+  wire();
+  state.source = await createSource();
+  const banner = $("banner");
+  if (state.source.readOnly) {
+    banner.hidden = false;
+    banner.innerHTML = '<span class="tag">Showcase</span><span><b>Recordings of real runs</b>, replayed in the real console. Nothing here is connected to a machine, so starting work is switched off.</span>';
+    document.body.classList.add("showcase");
+    for (const id of ["newButton", "emptyChat"]) $(id).title = "Switched off in the showcase";
+  } else {
+    try {
+      await state.source.health();
+    } catch (error) {
+      banner.hidden = false;
+      banner.className = "banner error";
+      banner.innerHTML = `<b>The local Agent Lab service is not reachable.</b><span>${esc(error.message)}</span>`;
+    }
+  }
+  const [levels, provider, projects] = await Promise.all([
+    state.source.reasoningLevels().catch(() => []),
+    state.source.provider().catch(() => null),
+    state.source.projects().catch(() => []),
+  ]);
+  state.levels = levels || [];
+  state.provider = provider;
+  state.projects = projects || [];
+  fillLevels($("reasoningSelect"), "standard");
+  fillLevels($("runReasoning"), "standard");
+  renderProvider();
+  renderWorkspace();
+  await loadLists();
+  if (!location.hash) {
+    if (state.source.readOnly && state.runs.length) navigate("runs", state.runs[0].run_id);
+    else navigate("runs");
+  } else {
+    route();
+  }
 }
 
 bootstrap();

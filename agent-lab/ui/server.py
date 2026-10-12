@@ -28,6 +28,8 @@ HARNESS = ROOT / "agent-lab" / "harness" / "agent_harness.py"
 CONFIG = ROOT / "agent-lab" / "harness" / "config.json"
 RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,50}")
 STATIC_CACHE_CONTROL = "no-store, max-age=0"
+STATIC_FILES = {"app.js", "narration.js", "source.js", "specimen.js", "styles.css", "favicon.svg"}
+STATIC_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".html": "text/html"}
 
 sys.path.insert(0, str(HARNESS.parent))
 from agent_harness import (  # noqa: E402
@@ -403,6 +405,39 @@ def read_events(run_id: str) -> list[dict[str, Any]]:
     return events
 
 
+EVENT_PAGE_LIMIT = 2000
+
+
+def read_event_page(run_id: str, offset: Any) -> dict[str, Any]:
+    """Return complete events from a line offset so the console can replay a whole run.
+
+    run_state only carries the newest 200 events for polling; replay and the
+    live run view need the full ordered log, fetched incrementally.
+    """
+    try:
+        start = max(0, int(offset or 0))
+    except (TypeError, ValueError) as exc:
+        raise ApiError("offset must be a non-negative integer") from exc
+    path = resolve_inside(RUNS_DIR, run_id) / "events.jsonl"
+    if not path.is_file():
+        return {"offset": start, "next": start, "events": [], "complete": True}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    window = lines[start : start + EVENT_PAGE_LIMIT]
+    events: list[dict[str, Any]] = []
+    for line in window:
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            events.append(value)
+    next_offset = start + len(window)
+    return {"offset": start, "next": next_offset, "events": events, "complete": next_offset >= len(lines)}
+
+
 def project_files(run_id: str) -> list[dict[str, Any]]:
     return project_files_from(run_project_dir(run_id))
 
@@ -471,6 +506,8 @@ def run_state(run_id: str) -> dict[str, Any]:
         "model_calls": summary.get("model_calls", progress.get("model_calls", 0)),
         "tool_calls": summary.get("tool_calls", progress.get("tool_calls", 0)),
         "context": summary.get("context", progress.get("context", {})),
+        "max_turns": saved_config.get("max_turns"),
+        "reasoning": summary.get("reasoning") or {"level": saved_config.get("reasoning_level")},
     }
 
 
@@ -502,6 +539,9 @@ def run_summaries() -> list[dict[str, Any]]:
                 "workspace_lock": state.get("workspace_lock", {}),
                 "skills": state.get("skills", summary.get("skills", {})),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
+                "reasoning_level": (summary.get("reasoning") or {}).get("level"),
+                "first_pass_passed": summary.get("first_pass_passed"),
+                "model_calls": state.get("model_calls"),
                 "updated": directory.stat().st_mtime,
             }
         )
@@ -1474,11 +1514,34 @@ def stop_run(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "status": "interrupted", "stopped": True}
 
 
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AgentLab/0.1"
 
     def log_message(self, format: str, *args: Any) -> None:
         return
+
+    def reject_untrusted_request(self) -> bool:
+        """Refuse requests that a web page or a tunnel could make on the operator's behalf.
+
+        Binding to 127.0.0.1 does not stop a browser tab from posting here
+        (cross-site request forgery) or a DNS-rebinding page from reading
+        responses, and a Cloudflare-style tunnel forwards public traffic with
+        its own Host header. The API can start a model that writes and runs
+        code, so only loopback Host and Origin values are answered.
+        """
+        port = self.server.server_address[1]
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host not in {f"{name}:{port}" for name in LOOPBACK_HOSTS}:
+            self.send_error_json("Agent Lab only answers requests addressed to 127.0.0.1 or localhost.", 403)
+            return True
+        origin = self.headers.get("Origin")
+        if origin is not None and origin.strip().lower() not in {f"http://{name}:{port}" for name in LOOPBACK_HOSTS}:
+            self.send_error_json("cross-origin requests are not accepted", 403)
+            return True
+        return False
 
     def send_json(self, value: Any, status: int = 200) -> None:
         data = json_bytes(value)
@@ -1497,7 +1560,9 @@ class Handler(BaseHTTPRequestHandler):
         if not path.is_file():
             raise ApiError("not found", 404)
         data = path.read_bytes()
-        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        # Windows registry mappings can label .js as text/plain, which browsers
+        # refuse for ES modules; pin the types the console actually serves.
+        content_type = STATIC_TYPES.get(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self.send_response(200)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -1506,12 +1571,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self) -> None:
+        if self.reject_untrusted_request():
+            return
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
         try:
             if path in {"/", "/index.html"}:
                 return self.send_static("index.html")
-            if path in {"/app.js", "/styles.css", "/favicon.svg"}:
+            if path.lstrip("/") in STATIC_FILES:
                 return self.send_static(path.lstrip("/"))
             if path == "/api/health":
                 return self.send_json({"status": "ok", "local_only": True})
@@ -1558,6 +1625,9 @@ class Handler(BaseHTTPRequestHandler):
                 run_id = validate_run_id(urllib.parse.unquote(pieces[0]))
                 if len(pieces) == 1:
                     return self.send_json(run_state(run_id))
+                if len(pieces) == 2 and pieces[1] == "events":
+                    offset = urllib.parse.parse_qs(parsed.query).get("offset", ["0"])[0]
+                    return self.send_json(read_event_page(run_id, offset))
                 if pieces[1] == "file" and len(pieces) == 3:
                     project = run_project_dir(run_id)
                     file_path = resolve_inside(project, urllib.parse.unquote(pieces[2]))
@@ -1574,8 +1644,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error_json(str(exc), 500)
 
     def do_POST(self) -> None:
+        if self.reject_untrusted_request():
+            return
         parsed = urllib.parse.urlsplit(self.path)
         try:
+            # A cross-site form or no-cors fetch can only send "simple" content
+            # types; requiring JSON forces a CORS preflight this server never grants.
+            if self.headers.get_content_type() != "application/json":
+                raise ApiError("requests must use Content-Type: application/json", 415)
             content_length = int(self.headers.get("Content-Length", "0"))
             if content_length <= 0 or content_length > 100000:
                 raise ApiError("request body is missing or too large")

@@ -1,0 +1,303 @@
+{
+ "generated_at": "2026-10-12T02:19:53+00:00",
+ "runs": [
+  {
+   "run_id": "matrix-20261011-201925-004-off",
+   "status": "success",
+   "summary": "The project has been created with index.html, styles.css, and app.js. The application logic was implemented to cycle a status message between 'Seed planted' and 'Watering cycle active'. The layout is responsive and adheres to the initial requirements. Validation via node --check app.js passed, and the latest git_diff confirms the final state.",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "004-mini-project.md",
+    "title": "Mini project smoke test",
+    "description": "A smaller multi-file browser build for quick UI iteration.",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_mini_project.py"
+    }
+   },
+   "elapsed_seconds": 114.71,
+   "reasoning_level": "off",
+   "first_pass_passed": false,
+   "model_calls": 17
+  },
+  {
+   "run_id": "matrix-20261011-205901-001-deep",
+   "status": "success",
+   "summary": "The self-contained single-page site for Northstar Field Notes has been created with index.html, styles.css, and app.js. The structure includes a hero section, a submission form, dynamic rendering of observations, and styling matching the dark/warm aesthetic. The application passed the validation check (node --check app.js exit code 0) and the final changes were reviewed via git_diff.",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "001-static-page.md",
+    "title": "Static page smoke test",
+    "description": "Full UI build benchmark with an external static-page evaluator.",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_static_page.py"
+    }
+   },
+   "elapsed_seconds": 79.66,
+   "reasoning_level": "deep",
+   "first_pass_passed": true,
+   "model_calls": 9
+  },
+  {
+   "run_id": "matrix-20261011-203757-001-standard",
+   "status": "blocked",
+   "summary": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "001-static-page.md",
+    "title": "Static page smoke test",
+    "description": "Full UI build benchmark with an external static-page evaluator.",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_static_page.py"
+    }
+   },
+   "elapsed_seconds": 136.79,
+   "reasoning_level": "standard",
+   "first_pass_passed": false,
+   "model_calls": 13
+  },
+  {
+   "run_id": "matrix-20261011-205901-003-standard",
+   "status": "success",
+   "summary": "Generated health-report.json and validate-report.mjs. The validation script passed successfully, confirming the artifact meets the requirements.",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "003-structured-validation.md",
+    "title": "Structured validation smoke test",
+    "description": "Create a small machine-readable report and validate its shape locally.",
+    "gates": {
+     "required_files": [
+      "health-report.json",
+      "validate-report.mjs"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_structured_validation.py"
+    }
+   },
+   "elapsed_seconds": 48.35,
+   "reasoning_level": "standard",
+   "first_pass_passed": true,
+   "model_calls": 10
+  },
+  {
+   "run_id": "matrix-20261011-205901-002-off",
+   "status": "success",
+   "summary": "Created agent-check.md and agent-check.mjs. The validation command 'node --check agent-check.mjs' executed successfully with exit code 0, confirming the JavaScript module is valid.",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "002-file-roundtrip.md",
+    "title": "File round-trip smoke test",
+    "description": "Fast tool-chain smoke test: inspect, write, read, validate, and review.",
+    "gates": {
+     "required_files": [
+      "agent-check.md",
+      "agent-check.mjs"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_file_roundtrip.py"
+    }
+   },
+   "elapsed_seconds": 11.56,
+   "reasoning_level": "off",
+   "first_pass_passed": true,
+   "model_calls": 7
+  }
+ ],
+ "sessions": [
+  "chat-20261011-221823"
+ ],
+ "tasks": [
+  {
+   "name": "001-static-page.md",
+   "title": "Static page smoke test",
+   "content": "# Static page smoke test\n\nBuild a polished, self-contained single-page site for a fictional app called “Northstar Field Notes.” It is a small personal field notebook for recording observations outdoors.\n\nCreate `index.html`, `styles.css`, and `app.js` in the project directory. The page should:\n\n- Have a clear hero section with the product name, a concise description, and a primary “Add observation” action.\n- Include a form that accepts an observation title, location, and note text.\n- Render submitted observations as cards on the page without reloading.\n- Include a visible observation count and an empty-state message before the first observation.\n- Look intentional on both a phone-sized viewport and a desktop viewport. Use plain HTML, CSS, and JavaScript only; do not use a framework, CDN, remote font, or external image.\n- Use semantic elements and labels, sensible keyboard focus styles, and reasonable color contrast.\n\nKeep the design coherent and restrained: dark sky/navy background, warm paper-like cards, and one strong accent color. The result should feel like a real tiny product, not a raw demo dump.\n\nMove through the workflow explicitly: inspect the project, record a short plan with `workflow_checkpoint`, implement the page, verify it with `node --check app.js`, review the complete change with `git_diff`, and then call `finish` with an honest summary. The validation command does not require network access.\n",
+   "description": "Full UI build benchmark with an external static-page evaluator.",
+   "profile": {
+    "name": "001-static-page.md",
+    "title": "Static page smoke test",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_static_page.py"
+    }
+   }
+  },
+  {
+   "name": "002-file-roundtrip.md",
+   "title": "File round-trip smoke test",
+   "content": "# File round-trip smoke test\n\nExercise the harness's core file and validation loop in the current project. This is intentionally small and should finish quickly.\n\nFirst inspect the project with `list_files`. Record a short plan with `workflow_checkpoint` before making changes. Then create both files below:\n\n- `agent-check.md`: a short note with a title, the purpose of this smoke test, and three checklist items.\n- `agent-check.mjs`: a tiny valid JavaScript module that exports a constant named `status` with the value `\"ok\"`.\n\nRead both files back with `read_file` after writing them. Verify the JavaScript with the local command `node --check agent-check.mjs`; do not install packages or use the network. Review the complete change with `git_diff`, then call `finish` with an honest summary of the files and validation result.\n",
+   "description": "Fast tool-chain smoke test: inspect, write, read, validate, and review.",
+   "profile": {
+    "name": "002-file-roundtrip.md",
+    "title": "File round-trip smoke test",
+    "gates": {
+     "required_files": [
+      "agent-check.md",
+      "agent-check.mjs"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_file_roundtrip.py"
+    }
+   }
+  },
+  {
+   "name": "003-structured-validation.md",
+   "title": "Structured validation smoke test",
+   "content": "# Structured validation smoke test\n\nBuild a tiny, inspectable health-report artifact without using dependencies or the network.\n\nStart by inspecting the project with `list_files`, then record a short plan with `workflow_checkpoint`. Create:\n\n- `health-report.json`: valid JSON containing a top-level `status` equal to `\"ok\"`, a `checks` array with at least two named checks, and a short `generated_for` string.\n- `validate-report.mjs`: a dependency-free Node script that reads `health-report.json`, checks those fields, prints a concise success message, and exits nonzero when the shape is invalid.\n\nRead the created files back, run `node validate-report.mjs` as the local validation command, and use `git_diff` to review the complete change after validation. Then call `finish` with an honest summary. Do not install packages or fetch anything.\n",
+   "description": "Create a small machine-readable report and validate its shape locally.",
+   "profile": {
+    "name": "003-structured-validation.md",
+    "title": "Structured validation smoke test",
+    "gates": {
+     "required_files": [
+      "health-report.json",
+      "validate-report.mjs"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_structured_validation.py"
+    }
+   }
+  },
+  {
+   "name": "004-mini-project.md",
+   "title": "Mini project smoke test",
+   "content": "# Mini project smoke test\n\nBuild a compact, polished one-page project for a fictional app called “Signal Garden.” This is a faster browser-build exercise than the full Static page smoke test.\n\nInspect the project first and record a short plan with `workflow_checkpoint`. Create exactly three dependency-free files: `index.html`, `styles.css`, and `app.js`. The page should have a clear heading, a short description, one primary action, and a small interactive status element that changes when the action is used. Use semantic HTML, visible focus styles, responsive layout, and a restrained visual system. Do not use a framework, CDN, remote font, or external image.\n\nRead the files back after creating them. Run `node --check app.js` as the local validation command, then review the complete change with `git_diff`. Finish with an honest summary of what exists and what was checked.\n",
+   "description": "A smaller multi-file browser build for quick UI iteration.",
+   "profile": {
+    "name": "004-mini-project.md",
+    "title": "Mini project smoke test",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_mini_project.py"
+    }
+   }
+  }
+ ],
+ "reasoning_levels": [
+  {
+   "value": "off",
+   "label": "Off",
+   "budget": 0,
+   "max_tokens": 700,
+   "description": "Fastest replies with thinking disabled."
+  },
+  {
+   "value": "low",
+   "label": "Low",
+   "budget": 256,
+   "max_tokens": 1024,
+   "description": "A short verification pass for simple tasks."
+  },
+  {
+   "value": "standard",
+   "label": "Standard",
+   "budget": 1024,
+   "max_tokens": 2048,
+   "description": "The normal balance of quality and latency."
+  },
+  {
+   "value": "deep",
+   "label": "Deep",
+   "budget": 2048,
+   "max_tokens": 3072,
+   "description": "More room for multi-step reasoning and debugging."
+  },
+  {
+   "value": "max",
+   "label": "Max",
+   "budget": 3072,
+   "max_tokens": 4096,
+   "description": "The slowest, most deliberate local setting."
+  }
+ ],
+ "provider": {
+  "provider": "local",
+  "label": "Local model",
+  "endpoint": "showcase recording",
+  "model": "Gemma-4-E2B-Q4_0",
+  "has_api_key": false
+ },
+ "skills": {
+  "defaults": [
+   "inspect-and-plan",
+   "verify-before-finish"
+  ],
+  "skills": [
+   {
+    "name": "inspect-and-plan",
+    "description": "Use for a build task before changing project files so the work starts from evidence and a concise operational plan.",
+    "source": "builtin",
+    "content_hash": "9b5821089646184f1a6fae116f01bb3f04daea9b8a9ae83d5971cecdc68a989c",
+    "quality": "Trusted bundled instruction; authored for Agent Lab.",
+    "activatable": true
+   },
+   {
+    "name": "review-before-finish",
+    "description": "Review the complete project diff after validation and report only evidence-backed completion.",
+    "source": "builtin",
+    "content_hash": "abe3bd99dbd1e70625bfabd21b4d162abb8b53591b2bf1b7e13c175a09ef667d",
+    "quality": "Trusted bundled instruction; authored for Agent Lab.",
+    "activatable": true
+   },
+   {
+    "name": "systematic-debugging",
+    "description": "Debug from observable evidence by reproducing, isolating, fixing, and rechecking the failure.",
+    "source": "builtin",
+    "content_hash": "8d3e01a77e35f2337f46e7f18196accc6112495c357f102ead29ea2d6b4559a0",
+    "quality": "Trusted bundled instruction; authored for Agent Lab.",
+    "activatable": true
+   },
+   {
+    "name": "test-driven-changes",
+    "description": "Make behavior changes with a failing check first, then implement and verify the smallest fix.",
+    "source": "builtin",
+    "content_hash": "249df72af0164923cd8d54fe9538cebba34994d586b5f8b110d48fff256ee08a",
+    "quality": "Trusted bundled instruction; authored for Agent Lab.",
+    "activatable": true
+   },
+   {
+    "name": "verify-before-finish",
+    "description": "Use after project changes and before completion so success is backed by a fresh verification result.",
+    "source": "builtin",
+    "content_hash": "8ecbf35f77c692ad5159ec2771262a0558e6c94c9ba3ecb38e16aa134ccaec37",
+    "quality": "Trusted bundled instruction; authored for Agent Lab.",
+    "activatable": true
+   }
+  ]
+ }
+}
