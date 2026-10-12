@@ -40,6 +40,38 @@ class AtomicPersistenceTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "previous\n")
             self.assertEqual(list(path.parent.glob(f".{path.name}.*.tmp")), [])
 
+    def test_brief_windows_sharing_lock_is_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tool-receipt.json"
+            real_replace = MODULE.os.replace
+            calls = []
+
+            def locked_twice(source, destination):
+                calls.append(source)
+                if len(calls) <= 2:
+                    raise PermissionError(5, "Access is denied")
+                return real_replace(source, destination)
+
+            with patch.object(MODULE.os, "replace", side_effect=locked_twice), patch.object(MODULE.time, "sleep"):
+                MODULE.atomic_write_json(path, {"status": "pending"})
+
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "pending"})
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*.tmp")), [])
+
+    def test_persistent_lock_still_fails_without_touching_the_previous_document(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "progress.json"
+            path.write_text("previous\n", encoding="utf-8")
+
+            with patch.object(MODULE.os, "replace", side_effect=PermissionError(5, "Access is denied")), \
+                    patch.object(MODULE.time, "sleep"):
+                with self.assertRaises(PermissionError):
+                    MODULE.atomic_write_text(path, "new\n")
+
+            self.assertEqual(path.read_text(encoding="utf-8"), "previous\n")
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*.tmp")), [])
+
 
 if __name__ == "__main__":
     unittest.main()

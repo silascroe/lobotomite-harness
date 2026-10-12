@@ -5,8 +5,31 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
+
+
+REPLACE_ATTEMPTS = 8
+REPLACE_BACKOFF_SECONDS = 0.025
+
+
+def _replace(source: Path, destination: Path) -> None:
+    """Rename over the destination, waiting out brief Windows sharing locks.
+
+    On Windows a reader (the UI polling a snapshot, an editor, antivirus) can
+    hold the destination open and make ``os.replace`` raise PermissionError
+    for a few milliseconds.  Retrying briefly keeps that from ending a run.
+    """
+
+    for attempt in range(1, REPLACE_ATTEMPTS + 1):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == REPLACE_ATTEMPTS:
+                raise
+            time.sleep(REPLACE_BACKOFF_SECONDS * attempt)
 
 
 def atomic_write_bytes(path: Path, content: bytes) -> None:
@@ -28,7 +51,7 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary_path, path)
+        _replace(temporary_path, path)
     except Exception:
         if file_descriptor != -1:
             try:
@@ -66,7 +89,7 @@ def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> N
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary_path, path)
+        _replace(temporary_path, path)
     except Exception:
         if file_descriptor != -1:
             try:

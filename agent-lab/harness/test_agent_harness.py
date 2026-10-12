@@ -101,10 +101,30 @@ class HarnessUnitTests(unittest.TestCase):
             harness.call_model()
         schema = captured["payload"]["response_format"]["schema"]
         self.assertEqual(captured["payload"]["response_format"]["type"], "json_object")
-        self.assertEqual(schema["properties"]["action"]["enum"], sorted(MODULE.ACTION_NAMES))
-        self.assertEqual(schema["required"], ["action", "args"])
-        self.assertFalse(schema["additionalProperties"])
+        variants = {variant["properties"]["action"]["const"]: variant for variant in schema["anyOf"]}
+        self.assertEqual(set(variants), MODULE.ACTION_NAMES)
+        for variant in variants.values():
+            self.assertEqual(variant["required"], ["action", "args"])
+            self.assertFalse(variant["additionalProperties"])
+            self.assertFalse(variant["properties"]["args"]["additionalProperties"])
+        # The field that ended matrix-20261002-072910-001-off cannot be generated.
+        self.assertEqual(set(variants["apply_patch"]["properties"]["args"]["properties"]), {"patch"})
+        self.assertEqual(variants["write_file"]["properties"]["args"]["required"], ["path", "content"])
+        self.assertEqual(
+            variants["workflow_checkpoint"]["properties"]["args"]["properties"]["phase"]["enum"],
+            sorted(MODULE.WORKFLOW_PHASES),
+        )
         harness.release_workspace_lease()
+
+    def test_local_action_schema_agrees_with_the_payload_validator(self) -> None:
+        for variant in MODULE.local_action_response_schema()["anyOf"]:
+            action = variant["properties"]["action"]["const"]
+            args_schema = variant["properties"]["args"]
+            sample = {}
+            for key in args_schema["required"]:
+                field = args_schema["properties"][key]
+                sample[key] = field["enum"][0] if "enum" in field else {"string": "x", "integer": 1}[field["type"]]
+            self.assertEqual(MODULE.validate_action_payload({"action": action, "args": sample})[0], action)
 
     def test_task_profile_replaces_global_static_page_gates(self) -> None:
         config = {
@@ -511,6 +531,36 @@ class HarnessUnitTests(unittest.TestCase):
         with self.assertRaises(MODULE.HarnessError):
             harness.dispatch("workflow_checkpoint", {"phase": "plan", "next_action": "Write files."})
 
+    def test_repeated_late_plan_checkpoints_do_not_end_a_finished_run(self) -> None:
+        # Regression for matrix-20261002-072910-002-deep and -003-deep: the work
+        # was complete and passed its checker, but a second late plan
+        # checkpoint raised "cannot transition from review to plan".
+        root = Path(self.temp_dir.name)
+        harness = MODULE.AgentHarness(
+            task="late plan task",
+            config={"require_workflow_gates": True, "allow_commands": ["cmd"]},
+            run_dir=root / "late-plan-run",
+            project_dir=root / "late-plan-run" / "project",
+            template_dir=None,
+        )
+        harness.prepare()
+        harness.dispatch("list_files", {"path": "."})
+        harness.dispatch("write_file", {"path": "note.md", "content": "# Note\n"})
+        harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+        harness.dispatch("git_diff", {})
+        self.assertEqual(harness.workflow["phase"], "review")
+
+        for summary in ("Created the note and validated it.", "Task completed; ready to finish."):
+            result = harness.dispatch(
+                "workflow_checkpoint", {"phase": "plan", "summary": summary, "next_action": "finish"}
+            )
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["late"])
+            self.assertEqual(harness.workflow["phase"], "review")
+
+        self.assertEqual(harness.missing_workflow_gates(), [])
+        harness.release_workspace_lease()
+
     def test_new_mutation_invalidates_previous_verification_evidence(self) -> None:
         root = Path(self.temp_dir.name)
         run_dir = root / "evidence-run"
@@ -556,6 +606,18 @@ class HarnessUnitTests(unittest.TestCase):
             }
         )
         self.assertEqual((self.project_dir / "hello.txt").read_text(encoding="utf-8"), "hello world\n")
+
+    def test_patch_may_start_at_a_file_header(self) -> None:
+        # Four runs on 2026-10-11 ended on "patch must start with *** Begin Patch"
+        # for otherwise well-formed patches.
+        self.harness.write_file({"path": "hello.txt", "content": "hello\n"})
+        result = self.harness.apply_patch(
+            {"patch": "*** Update File: hello.txt\n@@\n-hello\n+hello world\n*** End Patch"}
+        )
+        self.assertTrue(result["implicit_begin"])
+        self.assertEqual((self.project_dir / "hello.txt").read_text(encoding="utf-8"), "hello world\n")
+        with self.assertRaisesRegex(MODULE.HarnessError, "must start with"):
+            self.harness.apply_patch({"patch": "@@\n-hello world\n+bye\n*** End Patch"})
 
     def test_multi_file_patch_validates_every_file_before_writing_any_file(self) -> None:
         self.harness.write_file({"path": "first.txt", "content": "old\n"})
@@ -1221,6 +1283,109 @@ stale context from an older read
 
         harness.call_model = call_model
         return harness
+
+    def test_local_prompt_budget_leaves_room_for_the_response(self):
+        # Regression for matrix-20261002-072910-001-deep turn 18: a 6638-token
+        # prompt plus the reply filled the 8192-token window mid-JSON.
+        harness = self._fake_run_harness([])
+        harness.config.update({
+            "model_context_tokens": 8192, "context_max_tokens": 6000,
+            "reasoning_level": "deep", "constrain_local_actions": True,
+        })
+        response_tokens = MODULE.reasoning_settings(harness.config)["max_tokens"]
+        budget = harness.request_context_budget()
+        self.assertEqual(budget, int((8192 - response_tokens) / MODULE.CONTEXT_ESTIMATE_MARGIN))
+        self.assertLessEqual(budget * MODULE.CONTEXT_ESTIMATE_MARGIN + response_tokens, 8192)
+
+        harness.config.pop("model_context_tokens")
+        self.assertEqual(harness.request_context_budget(), 6000)
+
+    def test_remote_prompt_budget_ignores_the_local_window(self):
+        harness = self._fake_run_harness([])
+        harness.config.update({
+            "provider": "openai_compatible", "model_context_tokens": 8192, "context_max_tokens": 6000,
+        })
+        self.assertEqual(harness.request_context_budget(), 6000)
+
+    def test_truncated_response_gets_a_specific_recovery_message(self):
+        cut_off = '{"action":"write_file","args":{"path":"styles.css","content":"body {\\n  color'
+        finish = json.dumps({"action": "finish", "args": {"status": "success"}})
+        harness = self._fake_run_harness([cut_off, finish])
+        original = harness.call_model
+        calls = []
+
+        def call_model():
+            result = original()
+            calls.append(result)
+            if len(calls) == 1:
+                result["finish_reason"] = "length"
+            return result
+
+        harness.call_model = call_model
+        self.assertEqual(harness.run(), 0)
+        corrections = [m["content"] for m in harness.messages if m["role"] == "user"]
+        self.assertTrue(any("cut off at the model's token limit" in text for text in corrections))
+
+    def test_open_repair_findings_survive_context_compaction(self):
+        # Regression for matrix-20261011-185251-001-standard: the findings left
+        # the request within three turns and the model reread files until the
+        # budget ran out.
+        harness = self._fake_run_harness([])
+        harness.prepare()
+        harness.config.update({"context_max_tokens": 400, "context_recent_messages": 4})
+        report = MODULE.normalize_report(json.dumps({"passed": False, "findings": [
+            {"id": "has_focus_style", "message": "Add a visible keyboard focus style.",
+             "artifacts": ["styles.css"], "kind": "requirement"}]}), 1)
+        harness.repair.recheck({**report, "passed": False}, MODULE.fingerprint(harness.snapshot_files()), 9)
+        for index in range(12):
+            harness.messages.append({"role": "assistant", "content": f"read {index} " + "x" * 200})
+            harness.messages.append({"role": "user", "content": f"result {index} " + "y" * 200})
+        stored = json.dumps(harness.messages)
+
+        request = harness.model_messages()
+
+        self.assertTrue(harness.context_metadata["compacted"])
+        self.assertIn("has_focus_style", request[-1]["content"])
+        self.assertIn("styles.css", request[-1]["content"])
+        self.assertEqual(json.dumps(harness.messages), stored)
+        self.assertIn("No project file has changed", request[-1]["content"])
+        harness.release_workspace_lease()
+
+    def test_repair_reminder_tracks_progress_toward_a_fresh_evaluation(self):
+        # Regression for matrix-20261011-195859-004-off/-standard: a static
+        # reminder made the model repeat a successful patch and re-run
+        # validation instead of calling finish, and the duplicate guard ended both.
+        harness = self._fake_run_harness([])
+        harness.config["allow_commands"] = ["cmd"]
+        harness.prepare()
+        harness.dispatch("write_file", {"path": "styles.css", "content": "body {}\n"})
+        report = MODULE.normalize_report(json.dumps({"passed": False, "findings": [
+            {"id": "focus_style", "message": "Add a focus style.", "artifacts": ["styles.css"],
+             "kind": "requirement"}]}), 1)
+        harness.repair.recheck({**report, "passed": False}, MODULE.fingerprint(harness.snapshot_files()), 5)
+        status = lambda: harness.model_messages()[-1]["content"].rsplit("Status: ", 1)[1]
+
+        self.assertIn("No project file has changed", status())
+        harness.dispatch("replace_text", {"path": "styles.css", "old_text": "body {}",
+                                          "new_text": "body {}\na:focus { outline: 2px solid; }"})
+        self.assertIn("run your validation command", status())
+        harness.dispatch("run_command", {"command": "cmd /c exit 0"})
+        self.assertIn("git_diff", status())
+        harness.dispatch("git_diff", {})
+        self.assertIn("Call finish now", status())
+        self.assertIn("Call finish now", harness.next_step_hint())
+        harness.repair.finish("passed", "done")
+        self.assertNotIn("has_focus_style", json.dumps(harness.model_messages()))
+        harness.release_workspace_lease()
+
+    def test_duplicate_guard_names_the_next_workflow_step(self):
+        harness = self._fake_run_harness([])
+        harness.workflow_evidence.update(implement=True)
+        self.assertIn("validation", harness.next_step_hint())
+        harness.workflow_evidence.update(verify=True)
+        self.assertIn("git_diff", harness.next_step_hint())
+        harness.workflow_evidence.update(review=True)
+        self.assertIn("finish", harness.next_step_hint())
 
     def test_evaluator_repair_uses_extension_and_passes(self):
         finish = json.dumps({"action": "finish", "args": {"status": "success"}})
