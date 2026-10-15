@@ -36,4 +36,10 @@ The bounded evaluator-guided repair controller follows [the 2026-09-24 specifica
 
 ## Next work
 
-Replace the substring checkers with behavioral checks (load the page, submit the form, count the cards) so that a pass means the thing works; that is also the precondition for a meaningful strong-model comparison through the API provider. After that, test whether removing `apply_patch` from the small-model action set (leaving `replace_text` and `write_file`) helps the static page task, measured the same way: several batches per variant, artifacts graded afterward.
+The project is a measuring instrument for how much a harness lifts a tiny model (see the [README](../README.md#why-it-exists)), so work is ordered by whether it makes that measurement trustworthy.
+
+First, replace the substring checkers with behavioral checks: load the page in a real browser (Playwright can drive the installed Edge, so no browser download), submit the form, count the cards, and run the round-trip and validation programs on test inputs. Every later number depends on this.
+
+Then ablations on the fixed checkers, several batches per variant with artifacts graded afterward: the `plan` gate on and off, `apply_patch` removed from the small-model action set (leaving `replace_text` and `write_file`), repair on and off, and a bare one-shot baseline with no harness. A strong-model ceiling run through the API provider separates what is the model from what is the harness. Four tasks at three samples per cell is too small to settle any of this; more tasks, more samples, and a second small model are the cheap way to tighten it.
+
+Small honesty fixes worth doing alongside: make `allow_network` real or delete it, and correct the system prompt's claim that the model cannot see outside the project. Adding more infrastructure (approvals, receipts, leases) waits until the measurement is trustworthy.

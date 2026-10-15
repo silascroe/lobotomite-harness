@@ -5,7 +5,7 @@ Result: from-scratch console redesign verified against the live API, a live mode
 
 ## Direction
 
-The console is built around watching a small model work, not around browsing logs. It uses the field-notebook palette from Silas's own projects in a dark edition (forest and moss surfaces, paper text, sage, clay, ochre), Georgia display type and wide-tracked small-caps labels, all from fonts installed with Windows so the console works offline. An animated specimen shows agent state; a shimmering headline and activity feed narrate tool calls in the present tense while they run and the past tense once they return; the evaluator's verdict and first-pass versus repaired outcome lead the run page, and the model's own summary is shown last and labelled unverified.
+The console is built around watching a small model work, not around browsing logs. It uses the field-notebook palette from the author's other projects (Ground Matter, Proxy Draft, the card and board games) in a dark edition (forest and moss surfaces, paper text, sage, clay, ochre), Georgia display type and wide-tracked small-caps labels, all from fonts installed with Windows so the console works offline. An animated specimen shows agent state; a shimmering headline and activity feed narrate tool calls in the present tense while they run and the past tense once they return; the evaluator's verdict and first-pass versus repaired outcome lead the run page, and the model's own summary is shown last and labelled unverified.
 
 ## Automated evidence
 

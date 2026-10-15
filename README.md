@@ -2,6 +2,10 @@
 
 Agent Lab is a local-first workbench for testing how small language models handle bounded project work. The harness—not the model alone—supplies project workspaces, a limited tool catalog, workflow gates, persistence, and independent task evaluators. Local GGUF inference through llama.cpp is the default; an OpenAI-compatible API is an optional experiment using the same harness.
 
+## Why it exists
+
+It started as a curiosity: how competent can a model small enough to run on an ordinary desktop (an i5-8400 with a GTX 1070) become when the harness around it does the heavy lifting, and what are the pieces of the harnesses behind Codex, Claude Code and the chat apps? It is a learning project and something to show and play with, not a daily-driver coding agent. The output worth having is evidence about what each part of the harness adds to a tiny model, graded by checkers that test whether the result actually works.
+
 ## Quick start
 
 On Windows, from the repository root, use two PowerShell windows. The checked-in configuration currently targets local Gemma 4 E2B at 127.0.0.1:8080.

@@ -4,6 +4,7 @@ This is a short index, not a second archive of design documents. The linked spec
 
 | Decision | Current rule | Source |
 | --- | --- | --- |
+| A measuring instrument and a toy, not a daily-driver agent | Work is prioritized by whether it shows what the harness adds to a small model, graded on whether the result works. Infrastructure for everyday use waits until that measurement is trustworthy. | [README](../README.md#why-it-exists), [Status](STATUS.md#next-work) |
 | Local-first, provider-independent harness | Local llama.cpp is the default; an OpenAI-compatible provider is optional, but uses the same project, action, workflow, approval, and persistence controls. | [Operator guide](../agent-lab/README.md#optional-api-provider) |
 | Harness owns completion authority | Model output alone cannot declare a benchmark pass. Workflow/file/validation/review gates and the independent evaluator remain authoritative. | [Control-loop spec](superpowers/specs/2026-09-21-agent-lab-control-loop.md) |
 | Bounded named actions, not an unrestricted shell | Tool arguments are validated by action; command execution is limited by configuration. This is risk reduction, not an OS sandbox. | [Control-loop spec](superpowers/specs/2026-09-21-agent-lab-control-loop.md) |
