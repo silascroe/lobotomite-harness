@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check both the report and the behavior of its generated validator."""
+"""Check both the report and the behavior of its generated validator.
+
+The validator is copied into a scratch directory and run against the
+project's own report and against broken variants of it; it must accept the
+first and reject each of the others.
+"""
 
 import json
 import subprocess
@@ -9,17 +14,18 @@ from pathlib import Path
 from finding_messages import findings_for
 
 
-def run_validator(script: Path, report: dict, directory: Path) -> int | None:
+def run_validator(script: Path, report: dict, directory: Path):
+    """Return (exit code or None, stdout) for one run against the given report."""
     (directory / "validate-report.mjs").write_bytes(script.read_bytes())
     (directory / "health-report.json").write_text(json.dumps(report), encoding="utf-8")
     try:
         completed = subprocess.run(
             ["node", "validate-report.mjs"], cwd=directory,
-            capture_output=True, timeout=5, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=False,
         )
-        return completed.returncode
+        return completed.returncode, completed.stdout
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return None, ""
 
 
 def main() -> int:
@@ -43,23 +49,40 @@ def main() -> int:
     )
     checks["generated_for"] = isinstance(report, dict) and isinstance(report.get("generated_for"), str) and bool(report["generated_for"].strip())
     valid_report = all(checks.values())
-    checks["validator_accepts_valid"] = False
-    checks["validator_rejects_bad_status"] = False
-    checks["validator_rejects_bad_shape"] = False
-    infrastructure = []
+    behaviors = {
+        "validator_accepts_valid": (lambda r: r, True, "the project's own valid report"),
+        "validator_rejects_bad_status": (lambda r: {**r, "status": "bad"}, False, 'status set to "bad"'),
+        "validator_rejects_bad_shape": (lambda r: {**r, "checks": []}, False, "an empty checks array"),
+        "validator_rejects_unnamed_check": (lambda r: {**r, "checks": [r["checks"][0], {"status": "ok"}]}, False,
+                                            "a check without a name"),
+        "validator_rejects_missing_generated_for": (lambda r: {k: v for k, v in r.items() if k != "generated_for"},
+                                                    False, "generated_for removed"),
+    }
+    for key in behaviors:
+        checks[key] = False
+    checks["validator_prints_success"] = False
+    infrastructure, evidence = [], {}
     if validator.is_file() and valid_report:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
-            for key, sample, accept in [
-                ("validator_accepts_valid", report, True),
-                ("validator_rejects_bad_status", {**report, "status": "bad"}, False),
-                ("validator_rejects_bad_shape", {**report, "checks": []}, False),
-            ]:
-                code = run_validator(validator, sample, work)
-                checks[key] = code == 0 if accept else code not in (0, None)
+            for key, (variant, accept, label) in behaviors.items():
+                code, stdout = run_validator(validator, variant(report), work)
                 if code is None:
                     infrastructure.append(key)
-    result = {"passed": all(checks.values()), "checks": checks, "findings": findings_for(checks, infrastructure)}
+                    evidence[key] = "Node did not run the validator"
+                    continue
+                checks[key] = code == 0 if accept else code != 0
+                if not checks[key]:
+                    evidence[key] = f"with {label} it exited {code}"
+                if key == "validator_accepts_valid":
+                    checks["validator_prints_success"] = code == 0 and bool(stdout.strip())
+                    if code == 0 and not stdout.strip():
+                        evidence["validator_prints_success"] = "a valid report produced no output"
+    elif validator.is_file():
+        for key in list(behaviors) + ["validator_prints_success"]:
+            evidence[key] = "the report itself must be valid before the validator can be exercised"
+    result = {"passed": all(checks.values()), "checks": checks,
+              "findings": findings_for(checks, infrastructure, evidence)}
     print(json.dumps(result))
     return 0 if result["passed"] else 1
 

@@ -39,6 +39,14 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(command[command.index("--run-id") + 1], "matrix-002-deep")
         self.assertEqual(json.loads(command[command.index("--task-profile-json") + 1]), profile)
 
+    def test_ablation_flags_reach_the_harness_only_when_requested(self):
+        root = Path("C:/lab")
+        profile = {"name": "002-file-roundtrip.md", "title": "x", "gates": {}}
+        plain = build_command(root, "002-file-roundtrip.md", profile, "off", "r")
+        self.assertNotIn("--disable-action", plain)
+        ablated = build_command(root, "002-file-roundtrip.md", profile, "off", "r", ("apply_patch",))
+        self.assertEqual(ablated[ablated.index("--disable-action") + 1], "apply_patch")
+
     def test_summary_does_not_confuse_process_exit_with_evaluator_success(self):
         item = summarize("002-file-roundtrip.md", "off", "matrix-002-off", 2, {
             "status": "blocked", "elapsed_seconds": 12.5, "model_calls": 4, "tool_calls": 3,

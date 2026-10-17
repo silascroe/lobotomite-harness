@@ -21,6 +21,7 @@
   "tool_output_chars": 10000,
   "max_review_diff_chars": 50000,
   "command_timeout_seconds": 20,
+  "evaluator_timeout_seconds": 90,
   "max_file_bytes": 60000,
   "max_total_project_bytes": 50000000,
   "ignored_directories": [

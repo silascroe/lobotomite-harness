@@ -15,14 +15,18 @@ RUNS = ROOT / "agent-lab" / "runs"
 RESULTS = ROOT / "agent-lab" / "benchmarks" / "results"
 
 
-def build_command(root: Path, task_name: str, profile: dict, level: str, run_id: str) -> list[str]:
-    return [
+def build_command(root: Path, task_name: str, profile: dict, level: str, run_id: str,
+                  disabled_actions: tuple[str, ...] = ()) -> list[str]:
+    command = [
         sys.executable, str(root / "agent-lab/harness/agent_harness.py"),
         "--task-file", str(root / "agent-lab/tasks" / task_name),
         "--task-profile-json", json.dumps(profile, separators=(",", ":")),
         "--reasoning-level", level,
         "--run-id", run_id,
     ]
+    for name in disabled_actions:
+        command += ["--disable-action", name]
+    return command
 
 
 def summarize(task: str, level: str, run_id: str, returncode: int | None, summary: dict) -> dict:
@@ -73,6 +77,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tasks", nargs="*", help="catalog task filenames (default: all)")
     parser.add_argument("--levels", nargs="+", choices=("off", "standard", "deep"), default=["off", "standard", "deep"])
+    parser.add_argument("--variant", default="baseline", help="label recorded in the results file for this harness variant")
+    parser.add_argument("--disable-action", action="append", default=[], metavar="NAME",
+                        help="withhold an action from the model in every run of this batch (ablation)")
     parser.add_argument("--timeout", type=int, default=600, help="per-run wall timeout in seconds")
     args = parser.parse_args()
     catalog = json.loads((TASKS / "catalog.json").read_text(encoding="utf-8"))["tasks"]
@@ -90,7 +97,7 @@ def main() -> int:
         for level in args.levels:
             run_id = f"{batch_id}-{task[:3]}-{level}"
             print(f"START {task} {level} {run_id}", flush=True)
-            command = build_command(ROOT, task, profile, level, run_id)
+            command = build_command(ROOT, task, profile, level, run_id, tuple(args.disable_action))
             log = RESULTS / f"{run_id}.log"
             try:
                 with log.open("w", encoding="utf-8") as stream:
@@ -101,7 +108,8 @@ def main() -> int:
             summary = load_run_summary(RUNS / run_id, returncode)
             row = summarize(task, level, run_id, returncode, summary)
             records.append(row)
-            output.write_text(json.dumps({"batch_id": batch_id, "model": "local", "results": records}, indent=2), encoding="utf-8")
+            output.write_text(json.dumps({"batch_id": batch_id, "model": "local", "variant": args.variant,
+                                           "disabled_actions": args.disable_action, "results": records}, indent=2), encoding="utf-8")
             print(f"DONE {task} {level}: {row['status']} passed={row['passed']} calls={row['model_calls']}/{row['tool_calls']} seconds={row['elapsed_seconds']}", flush=True)
     print(f"RESULTS {output}", flush=True)
     return 0

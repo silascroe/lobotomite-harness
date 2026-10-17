@@ -80,6 +80,11 @@ ACTION_ARGUMENTS = {
     "find_skills": ({}, {"query": str, "source": str}),
     "finish": ({}, {"status": str, "summary": str}),
 }
+# Actions an experiment may withhold from the model. The finish gates need the
+# rest (inspection, a writing action, validation, review, checkpoints). Only
+# actions whose prompt text prompt_without_actions fully removes belong here:
+# replace_text and delete_file are named in several rules and would leak.
+DISABLEABLE_ACTIONS = {"apply_patch"}
 ACTION_REQUIRED_NONEMPTY = {"path", "old_text", "patch", "command", "phase", "summary", "next_action"}
 WORKFLOW_PHASES = {
     "intake", "inspect", "design", "plan", "implement", "verify", "review", "complete", "blocked"
@@ -622,7 +627,34 @@ def _argument_schema(action: str, key: str, expected: type) -> dict[str, Any]:
     return schema
 
 
-def local_action_response_schema() -> dict[str, Any]:
+def normalize_disabled_actions(value: Any) -> tuple[str, ...]:
+    """Validate the `disabled_actions` setting; unknown or protected names are errors."""
+    if value in (None, [], ()):
+        return ()
+    if not isinstance(value, (list, tuple)) or not all(isinstance(item, str) for item in value):
+        raise HarnessError("disabled_actions must be a list of action names")
+    names = tuple(dict.fromkeys(item.strip() for item in value))
+    bad = [name for name in names if name not in DISABLEABLE_ACTIONS]
+    if bad:
+        raise HarnessError(
+            "disabled_actions can only name: " + ", ".join(sorted(DISABLEABLE_ACTIONS)) + "; got " + ", ".join(bad)
+        )
+    return names
+
+
+def prompt_without_actions(prompt: str, disabled: tuple[str, ...]) -> str:
+    """Remove withheld actions from the prompt so the model is never told they exist."""
+    for name in disabled:
+        kept = [
+            line for line in prompt.splitlines(keepends=True)
+            if not line.startswith('{"action":"%s"' % name) and not line.startswith("- %s " % name)
+        ]
+        prompt = "".join(kept)
+        prompt = re.sub(r"(\w+), (\w+), or %s\b" % re.escape(name), r"\1 or \2", prompt)
+    return prompt
+
+
+def local_action_response_schema(disabled: tuple[str, ...] = ()) -> dict[str, Any]:
     """Per-action schema for the bundled llama.cpp response_format API.
 
     Each action carries its exact argument shape, so grammar-constrained
@@ -631,7 +663,7 @@ def local_action_response_schema() -> dict[str, Any]:
     because the remote provider does not receive this schema.
     """
     variants = []
-    for action in sorted(ACTION_NAMES):
+    for action in sorted(ACTION_NAMES - set(disabled)):
         required, optional = ACTION_ARGUMENTS[action]
         properties = {
             key: _argument_schema(action, key, expected)
@@ -657,7 +689,7 @@ def local_action_response_schema() -> dict[str, Any]:
     return {"anyOf": variants}
 
 
-def validate_action_payload(payload: Any) -> tuple[str, dict[str, Any]]:
+def validate_action_payload(payload: Any, disabled: tuple[str, ...] = ()) -> tuple[str, dict[str, Any]]:
     """Reject malformed action arguments before they can reach a tool."""
     if not isinstance(payload, dict):
         raise HarnessError("model response must be a JSON action object")
@@ -665,8 +697,8 @@ def validate_action_payload(payload: Any) -> tuple[str, dict[str, Any]]:
     if unexpected:
         raise HarnessError("unknown action fields: " + ", ".join(sorted(map(str, unexpected))))
     action = payload.get("action")
-    if not isinstance(action, str) or action not in ACTION_NAMES:
-        raise HarnessError("action must be one of " + ", ".join(sorted(ACTION_NAMES)))
+    if not isinstance(action, str) or action not in ACTION_NAMES or action in disabled:
+        raise HarnessError("action must be one of " + ", ".join(sorted(ACTION_NAMES - set(disabled))))
     if "args" not in payload or not isinstance(payload["args"], dict):
         raise HarnessError("args must be a JSON object")
     if "message" in payload and not isinstance(payload["message"], str):
@@ -783,7 +815,8 @@ class AgentHarness:
         self.workspace_kind = str(workspace_kind or "run")
         self.runtime_api_key = str(runtime_api_key or "").strip() or None
         self.workspace_lease: WorkspaceLease | None = None
-        self.system_prompt = system_prompt or SYSTEM_PROMPT
+        self.disabled_actions = normalize_disabled_actions(self.config.get("disabled_actions"))
+        self.system_prompt = prompt_without_actions(system_prompt or SYSTEM_PROMPT, self.disabled_actions)
         self.logger = RunLogger(run_dir / "events.jsonl")
         self.messages: list[dict[str, str]] = []
         self.context_metadata: dict[str, Any] = {
@@ -971,7 +1004,7 @@ class AgentHarness:
         if not self.repair.active or not messages:
             return messages
         findings = [
-            {key: item.get(key) for key in ("id", "message", "artifacts") if item.get(key)}
+            {key: item.get(key) for key in ("id", "message", "evidence", "artifacts") if item.get(key)}
             for item in self.repair.state.get("findings", [])
             if isinstance(item, dict)
         ]
@@ -1889,7 +1922,9 @@ class AgentHarness:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=int(self.config.get("command_timeout_seconds", 20)),
+                # Behavioral checkers start a headless browser, which takes
+                # longer than the model's own commands are allowed.
+                timeout=self.evaluator_timeout(),
                 check=False,
                 shell=False,
             )
@@ -1914,6 +1949,10 @@ class AgentHarness:
         if result.get("error"):
             raise HarnessError("external evaluator error: " + result["error"])
         return result
+
+    def evaluator_timeout(self) -> int:
+        command_timeout = int(self.config.get("command_timeout_seconds", 20))
+        return max(command_timeout, int(self.config.get("evaluator_timeout_seconds", 90)))
 
     def evaluator_failure_detail(self, evaluation: dict[str, Any]) -> str:
         raw = str(evaluation.get("stdout") or evaluation.get("stderr") or "no evaluator output")
@@ -2032,7 +2071,7 @@ class AgentHarness:
             if bool(self.config.get("constrain_local_actions", False)):
                 payload["response_format"] = {
                     "type": "json_object",
-                    "schema": local_action_response_schema(),
+                    "schema": local_action_response_schema(self.disabled_actions),
                 }
         request = urllib.request.Request(
             endpoint,
@@ -2342,7 +2381,7 @@ class AgentHarness:
                 try:
                     parsed = extract_json_object(content)
                     action = parsed.get("action") if isinstance(parsed, dict) else None
-                    action, args = validate_action_payload(parsed)
+                    action, args = validate_action_payload(parsed, self.disabled_actions)
                 except (HarnessError, AttributeError) as exc:
                     error = str(exc)
                     self.logger.event("invalid_model_action", turn=turn, error=error, content=content)
@@ -2570,6 +2609,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--approval-mode", choices=("auto", "confirm"), help="whether mutating tools need operator approval")
     parser.add_argument("--skill-overrides-json", help="JSON object containing per-task enabled and disabled skill names")
     parser.add_argument("--task-profile-json", help="JSON catalog profile containing task identity and completion gates")
+    parser.add_argument("--disable-action", action="append", default=[], metavar="NAME",
+                        help="withhold an action from the model for this run (ablation); repeatable")
     parser.add_argument("--no-gates", action="store_true", help="disable task-specific completion requirements and evaluator")
     return parser.parse_args()
 
@@ -2630,6 +2671,9 @@ def main() -> int:
         except json.JSONDecodeError as exc:
             raise SystemExit(f"invalid task profile JSON: {exc}") from exc
         config = apply_task_profile(config, task_profile)
+    if args.disable_action:
+        config = dict(config)
+        config["disabled_actions"] = list(normalize_disabled_actions(args.disable_action))
     if args.no_gates:
         config = dict(config)
         config["required_files"] = []

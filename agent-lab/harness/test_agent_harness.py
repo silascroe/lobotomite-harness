@@ -126,6 +126,58 @@ class HarnessUnitTests(unittest.TestCase):
                 sample[key] = field["enum"][0] if "enum" in field else {"string": "x", "integer": 1}[field["type"]]
             self.assertEqual(MODULE.validate_action_payload({"action": action, "args": sample})[0], action)
 
+    def test_disabled_action_is_absent_from_prompt_schema_and_validator(self) -> None:
+        disabled = MODULE.normalize_disabled_actions(["apply_patch"])
+        prompt = MODULE.prompt_without_actions(MODULE.SYSTEM_PROMPT, disabled)
+        self.assertNotIn("apply_patch", prompt, "the model must not be told the action exists")
+        self.assertIn("Make changes with write_file or replace_text.", prompt)
+        self.assertIn('{"action":"replace_text"', prompt, "other actions stay documented")
+        names = {variant["properties"]["action"]["const"] for variant in MODULE.local_action_response_schema(disabled)["anyOf"]}
+        self.assertEqual(names, MODULE.ACTION_NAMES - {"apply_patch"})
+        patch_call = {"action": "apply_patch", "args": {"patch": "*** Begin Patch\n*** End Patch"}}
+        self.assertEqual(MODULE.validate_action_payload(patch_call)[0], "apply_patch")
+        with self.assertRaisesRegex(MODULE.HarnessError, "action must be one of") as caught:
+            MODULE.validate_action_payload(patch_call, disabled)
+        self.assertNotIn("apply_patch", str(caught.exception))
+
+    def test_only_experiment_safe_actions_can_be_disabled(self) -> None:
+        self.assertEqual(MODULE.normalize_disabled_actions(None), ())
+        self.assertEqual(MODULE.normalize_disabled_actions(["apply_patch", "apply_patch"]), ("apply_patch",))
+        for bad in (["finish"], ["write_file"], ["replace_text"], ["nonsense"], "apply_patch", [1]):
+            with self.assertRaises(MODULE.HarnessError, msg=repr(bad)):
+                MODULE.normalize_disabled_actions(bad)
+        with self.assertRaises(MODULE.HarnessError):
+            self._fake_run_harness([]).__class__(
+                task="t", config={"disabled_actions": ["finish"]}, run_dir=self.run_dir / "bad",
+                project_dir=self.run_dir / "bad" / "project", template_dir=None)
+
+    def test_disabled_action_sent_anyway_is_rejected_then_the_run_continues(self) -> None:
+        patch_call = '{"action":"apply_patch","args":{"patch":"*** Begin Patch\\n*** End Patch"}}'
+        write = '{"action":"write_file","args":{"path":"note.txt","content":"hello\\n"}}'
+        finish = '{"action":"finish","args":{"status":"success","summary":"done"}}'
+        harness = self._fake_run_harness([patch_call, write, finish], disabled_actions=["apply_patch"])
+
+        self.assertEqual(harness.run(), 0)
+
+        self.assertEqual((harness.project_dir / "note.txt").read_text(encoding="utf-8"), "hello\n")
+        events = [json.loads(line) for line in (harness.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+        rejected = [event["data"] for event in events if event["event"] == "invalid_model_action"]
+        self.assertEqual(len(rejected), 1)
+        self.assertIn("action must be one of", rejected[0]["error"])
+        self.assertNotIn("apply_patch", rejected[0]["error"])
+        self.assertEqual([e["data"]["action"] for e in events if e["event"] == "tool_result"], ["write_file"])
+        self.assertEqual(MODULE.load_json(harness.run_dir / "config.json")["disabled_actions"], ["apply_patch"])
+
+    def test_disabled_actions_survive_resume(self) -> None:
+        harness = self._fake_run_harness([], disabled_actions=["apply_patch"])
+        harness.prepare()
+        harness.save_progress(checkpoint="model_call")
+        harness.release_workspace_lease()
+        resumed = MODULE.AgentHarness.resume_from_run(harness.run_dir)
+        self.assertEqual(resumed.disabled_actions, ("apply_patch",))
+        self.assertNotIn("apply_patch", resumed.system_prompt)
+        resumed.release_workspace_lease()
+
     def test_task_profile_replaces_global_static_page_gates(self) -> None:
         config = {
             "required_files": ["index.html", "styles.css", "app.js"],
@@ -1251,7 +1303,8 @@ stale context from an older read
         self.assertIn("has_focus_style", issue)
         self.assertNotIn('"checks"', issue)
 
-    def _fake_run_harness(self, responses: list[str], *, gated: bool = False) -> MODULE.AgentHarness:
+    def _fake_run_harness(self, responses: list[str], *, gated: bool = False,
+                          disabled_actions: list[str] | None = None) -> MODULE.AgentHarness:
         root = Path(self.temp_dir.name)
         run_dir = root / f"fake-run-{len(list(root.iterdir()))}"
         project_dir = run_dir / "project"
@@ -1263,6 +1316,8 @@ stale context from an older read
             "require_validation": False,
             "require_workflow_gates": gated,
         }
+        if disabled_actions:
+            config["disabled_actions"] = disabled_actions
         harness = MODULE.AgentHarness(
             task="fake model task",
             config=config,
@@ -1335,7 +1390,8 @@ stale context from an older read
         harness.config.update({"context_max_tokens": 400, "context_recent_messages": 4})
         report = MODULE.normalize_report(json.dumps({"passed": False, "findings": [
             {"id": "has_focus_style", "message": "Add a visible keyboard focus style.",
-             "artifacts": ["styles.css"], "kind": "requirement"}]}), 1)
+             "artifacts": ["styles.css"], "kind": "requirement",
+             "evidence": "no visible change when focused: button.primary"}]}), 1)
         harness.repair.recheck({**report, "passed": False}, MODULE.fingerprint(harness.snapshot_files()), 9)
         for index in range(12):
             harness.messages.append({"role": "assistant", "content": f"read {index} " + "x" * 200})
@@ -1347,6 +1403,7 @@ stale context from an older read
         self.assertTrue(harness.context_metadata["compacted"])
         self.assertIn("has_focus_style", request[-1]["content"])
         self.assertIn("styles.css", request[-1]["content"])
+        self.assertIn("button.primary", request[-1]["content"], "behavioral evidence says what was observed")
         self.assertEqual(json.dumps(harness.messages), stored)
         self.assertIn("No project file has changed", request[-1]["content"])
         harness.release_workspace_lease()
@@ -1532,6 +1589,18 @@ stale context from an older read
                 self.harness.finish_issue({"status": "success"})
         self.assertIsNone(self.harness.repair.state)
         self.assertIsNone(self.harness.first_pass_passed)
+
+    def test_evaluator_gets_its_own_longer_timeout(self):
+        # Behavioral checkers start a headless browser, which the model's
+        # 20-second command limit does not leave room for.
+        self.harness.config.update({"evaluator": "agent-lab/checks/check_static_page.py",
+                                    "command_timeout_seconds": 20, "evaluator_timeout_seconds": 90})
+        completed = MODULE.subprocess.CompletedProcess([], 0, stdout='{"passed": true, "checks": {}}', stderr="")
+        with patch.object(MODULE.subprocess, "run", return_value=completed) as run:
+            self.harness.run_evaluator()
+        self.assertEqual(run.call_args.kwargs["timeout"], 90)
+        self.harness.config["evaluator_timeout_seconds"] = 5
+        self.assertEqual(self.harness.evaluator_timeout(), 20, "never shorter than the command limit")
 
     def test_first_pass_success_does_not_create_episode(self):
         harness = self._fake_run_harness(['{"action":"finish","args":{}}'])

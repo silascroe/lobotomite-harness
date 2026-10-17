@@ -91,7 +91,7 @@ The web console's Starting point selector now includes four built-in runs:
 - `Structured validation smoke test` — a small JSON artifact plus a dependency-free local validator.
 - `Mini project smoke test` — a smaller three-file browser build for quick iteration.
 
-The selector shows each preset's purpose before launch. Its completion gates come from `agent-lab/tasks/catalog.json`; all four presets now have independent checkers outside the generated project. The mini-project checker is a structural smoke test, not a visual-quality grade. Direct CLI `-TaskFile` runs retain the configured default gates unless `-NoGates` is supplied. To compare the presets across Gemma reasoning levels sequentially on one local server, run `python agent-lab/benchmarks/catalog_matrix.py`; it writes an incremental JSON report under `agent-lab/benchmarks/results/` after each run. The runner does not automatically resume an interrupted batch.
+The selector shows each preset's purpose before launch. Its completion gates come from `agent-lab/tasks/catalog.json`; all four presets have independent checkers outside the generated project that test behavior, not source text (see [Behavioral checkers](#behavioral-checkers)). They judge whether the result works, not how it looks. Direct CLI `-TaskFile` runs retain the configured default gates unless `-NoGates` is supplied. To compare the presets across Gemma reasoning levels sequentially on one local server, run `python agent-lab/benchmarks/catalog_matrix.py`; it writes an incremental JSON report under `agent-lab/benchmarks/results/` after each run. The runner does not automatically resume an interrupted batch.
 
 The generated project is at `agent-lab/runs/<run-id>/project`. The run also contains `events.jsonl`, `output.log`, `transcript.json`, `progress.json`, `summary.json`, `task.md`, and a copy of the config. Evaluator-rejected runs additionally keep their repair episode in `repair.json`.
 
@@ -189,6 +189,28 @@ Harness-owned JSON snapshots and project-file edits use same-directory atomic re
 For a new benchmark, change the task file and its completion gates (`required_files`, `require_validation`, and `evaluator`) together; otherwise you would be grading a new task with the old page's ruler.
 
 The static-page checker is deliberately outside the agent project so the model cannot edit its own grading code. The configured evaluator is also a completion gate: the harness rejects a claimed success until the checker passes.
+
+### Behavioral checkers
+
+The checkers use what the model built. For the static page and mini project, `checks/browser_checks.py` serves the project from a private `127.0.0.1` server (no directory listings, nothing outside the project, symlinks included) and runs `checks/browser_probe.mjs`, which starts the installed Edge or Chrome headless with a throwaway profile and drives it over the DevTools protocol using Node's built-in WebSocket; there are no npm packages and no browser download. Every request to another origin is blocked and recorded, and host names do not resolve. The probe types two observations and submits them, presses Tab through the page, clicks and keyboard-activates the mini project's first button, measures text contrast (3:1 floor), and shrinks the viewport to a 375px phone. The file round-trip module is imported and its `status` export read; the structured validator is run against the valid report and four invalid ones.
+
+Each failed check carries an `evidence` string with what was observed, for example `clicking button.submit-btn "Submit Observation" reloaded the page instead of adding a card`. The repair reminder passes it to the model. A missing browser or Node, or a probe malfunction, is an infrastructure finding, so the run errors instead of asking the model to repair its environment.
+
+The browser checks need Node and Edge, Chrome or Chromium in its usual install location. Set `AGENT_LAB_BROWSER` to the executable's full path to use another one. A page check takes several seconds, so the evaluator runs under its own `evaluator_timeout_seconds` (default 90, never shorter than `command_timeout_seconds`). The checker tests skip their browser fixtures, rather than fail, on a machine without a browser.
+
+### Ablations
+
+`disabled_actions` in the harness config (CLI: `--disable-action NAME`, repeatable; matrix runner: `--disable-action NAME --variant LABEL`) withholds an action from the model for an experiment. Today only `apply_patch` can be withheld, because only its prompt text is fully removable; the finish gates need the other actions. The action disappears from the system prompt, from the grammar schema local models are constrained by, and from action validation, and the setting is saved in the run's `config.json` so a resume keeps it. The matrix results file records the variant label. Results: [2026-10-16 ablation](benchmarks/2026-10-16-no-apply-patch-ablation.md).
+
+When a checker changes, grade recorded runs again to see what the old numbers meant. The script reads runs and never modifies them; it executes their model-written code exactly as the checker does during a run:
+
+```powershell
+$py = Join-Path $env:USERPROFILE '.codex\tools\python\bin\python3.14.exe'
+if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
+& $py agent-lab/benchmarks/regrade_runs.py matrix-20261011-201925 --workers 3
+```
+
+It prints recorded versus current verdicts per task, the most common failures and the runs that flipped, and saves the rows under `agent-lab/benchmarks/results/`.
 
 Non-interactive runs also checkpoint `transcript.json` and `progress.json` after each turn and tool observation, while the UI server appends worker stdout to `output.log`. If the UI process is restarted before `summary.json` is written, the run is shown as interrupted with its last durable turn, call counts, workflow, context metadata, and recovered raw output instead of being mislabeled as an empty aborted run.
 

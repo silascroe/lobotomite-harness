@@ -1,5 +1,7 @@
 # Gemma E2B after the audit fixes — 2026-10-11
 
+> Graded by the old substring checkers. Re-graded with behavioral checkers on 2026-10-14, set B falls from 26 to 18 of 36 and the overall improvement over set A disappears; see [the re-grade](2026-10-14-behavioral-regrade.md).
+
 Local `Gemma-4-E2B-Q4_0` on the bundled llama.cpp b11045 Vulkan server (`-c 8192`), the four catalog tasks at Off, Standard and Deep, 18-turn budget, temperature 0.6, fresh managed projects. Each set is three full batches (36 runs), so every cell has three samples instead of one. Every project was also graded afterward by its checker, to separate "the work was wrong" from "the harness stopped correct work".
 
 ## Sets

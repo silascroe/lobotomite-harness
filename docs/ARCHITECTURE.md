@@ -16,8 +16,8 @@ The default provider is the llama.cpp server at 127.0.0.1:8080. An optional Open
 | site/showcase/ and scripts/export_showcase.py | Sanitized recordings of selected runs and chats. GitHub Pages serves the unmodified console against them in read-only mode. |
 | agent-lab/harness/agent_harness.py | Owns the agent loop, provider calls, action validation and dispatch, finish gates, and run/session logging. Supporting modules separate workflow, recovery, context limits, approvals, persistence, review packets, job state, skills, and workspace locks. |
 | agent-lab/harness/provider.py | Selects the configured local provider or optional OpenAI-compatible chat-completions provider. Both use the same harness controls. |
-| agent-lab/tasks/ and agent-lab/checks/ | Define the task catalog and independent checkers. Evaluators grade artifacts; they do not edit the project. |
-| agent-lab/benchmarks/ | Runs catalog matrices and records outcomes separately from ordinary app state. |
+| agent-lab/tasks/ and agent-lab/checks/ | Define the task catalog and independent checkers. Evaluators grade artifacts by using them; they do not edit the project. Browser tasks are served from a private loopback server (`browser_checks.py`) to `browser_probe.mjs`, which drives an installed Edge or Chrome over the DevTools protocol, blocks every non-loopback request, and returns observations that the Python checker turns into checks with evidence. Program tasks are imported or run by Node on test inputs. |
+| agent-lab/benchmarks/ | Runs catalog matrices and records outcomes separately from ordinary app state. `regrade_runs.py` grades recorded runs again with the current checkers, without modifying them. |
 | scripts/ | Starts the local model and UI, runs CLI tasks, manages bridges, and inspects recorded model responses. |
 | models/ and runtime/ | Local GGUF files and llama.cpp binaries. They are machine-local assets and are ignored by Git. |
 
