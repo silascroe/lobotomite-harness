@@ -1,31 +1,25 @@
 # Agent Lab console QA
 
-Date: 2026-10-11
-Result: from-scratch console redesign verified against the live API, a live model run, a live chat, replay, the read-only showcase, and phone width.
+Date: 2026-10-17
+Result: blank-slate console redesign ("flight recorder") verified against the live API, live run and chat paths, replay, the read-only showcase build, desktop and phone width.
 
 ## Direction
 
-The console is built around watching a small model work, not around browsing logs. It uses the field-notebook palette from the author's other projects (Ground Matter, Proxy Draft, the card and board games) in a dark edition (forest and moss surfaces, paper text, sage, clay, ochre), Georgia display type and wide-tracked small-caps labels, all from fonts installed with Windows so the console works offline. An animated specimen shows agent state; a shimmering headline and activity feed narrate tool calls in the present tense while they run and the past tense once they return; the evaluator's verdict and first-pass versus repaired outcome lead the run page, and the model's own summary is shown last and labelled unverified.
+The console is an instrument for one question: what does each part of the harness do to a small model's run, judged by whether the result works. It reads as a flight recorder: dark panels, a monospace readout for every number, cyan for the model's own signal, and amber and red only for abnormal states (the ISA-101 habit of keeping colour for what needs attention). Type is IBM Plex Mono and IBM Plex Sans Condensed, bundled under the SIL Open Font License so the console works offline and the public page makes no third-party requests.
 
-## Automated evidence
+The four views came from four separate directions explored as mockups: the time-aligned recorder strip, a control-room process line with an alarm list, an experiments-first bench, and a file lens showing what the model believed versus what was on disk. All four are kept as routes in one console: Bench is the home page; a run has Recorder, Process, Files, Checks and Log views.
 
-- `node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_narration.mjs`: 17 tests pass. They cover the capability contract (runs, chats, approvals, settings, providers, projects, skills), the endpoints the live source uses, the showcase refusing every mutating action, escaping of model and file text, reasoning staying out of the events pane, reduced motion, and the narration model's behavior on tool calls, failures, evaluator checks, repairs, compaction, phase tags, terminal states and chat grouping.
-- `node --check` passes for `app.js`, `narration.js`, `source.js` and `specimen.js`.
-- `python -m unittest discover -s agent-lab/ui -p 'test_*.py'`: includes complete event pages for replay and JavaScript MIME types for the console modules.
+On a phone the layout changes rather than shrinks: a bottom tab bar replaces the top navigation; the recorder strip becomes a vertical tape with one row per turn and an overview strip above it, and a tapped row opens that turn inline; the process line runs top to bottom; the file grid transposes to turns × files; dialogs become full-screen sheets; the chat composer replaces the tab bar.
 
-## Browser evidence
+## Verification
 
-- Live API at 1440×900: a finished repaired run renders its verdict stamp, 13/13 checks, phase track, budget meter, files and the unverified model summary; the run list shows titles, reasoning levels and repaired badges.
-- Live run: a File round-trip run started from the new-run dialog progressed turn by turn (rows appended, specimen thinking) and settled on "Passed on the first try" without a reload.
-- Live chat: a new conversation showed a live "Thinking" line with a running timer, then the reply with its "Worked through N steps" disclosure.
-- Replay: a recorded run replays from its complete event log with rows, phase tags, checks and the specimen animating; scrubbing and speed changes work.
-- Details drawer: overview, files with preview, changes (review status and colored diff), filterable events and output. With the drawer open the run view reflows through container queries instead of truncating.
-- Showcase: the assembled Pages site (`agent-lab/ui` plus `site/showcase`) loads in read-only mode on a non-loopback host, shows the showcase banner, lists the curated runs and auto-plays the first one; no API probe is made.
-- Phone width (375×812): no horizontal overflow; navigation becomes an off-canvas sheet; the chamber, verdict, phases and activity stack cleanly.
-- Browser console: no JavaScript errors in live or showcase mode.
+- `node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_model.mjs`: 15 tests pass. The contract suite covers the shell, every run view, the start-run payload, chat and approval calls, the endpoints, the showcase refusing every mutating action, escaping of model and file text, bundled fonts, the phone layout and reasoning staying out of the log. The model suite reads the committed showcase recordings and checks the recorder, alarms, process state, the context-miss replay and the bench statistics against the 2026-10-16 reports (21/36, 42–73%, 22/36, p = 1.00, failure causes).
+- `python -m unittest discover -s agent-lab/ui -p 'test_*.py'`: 48 server tests pass, including the new benchmark catalog test.
+- The context-miss detector replays the harness's `apply_update` hunk by hunk. Both runs it flags (`065825-001-deep` turn 21, `065825-003-deep` turn 10) were confirmed by running the harness's own `apply_update`, instrumented, on the recorded inputs: both took the line-number fallback.
+- Browser checks (headless Chromium, 1440×1000 and 390×844): no horizontal overflow at either width; turn selection, arrow keys, replay at 16× with the turn following the cursor, scrubbing, bench experiment tabs and cell links, the new-run dialog, the provider dialog, and Checks and Log views all work with no page errors.
+- Live paths, without a model server: a run started from the dialog navigated to its page and settled on ERROR with the endpoint failure as the reason; a new chat sent a message and showed the failed-turn banner with Retry. Testing this exposed a start-up race (the server's output capture could create the run folder before the harness did), fixed in `prepare()`.
+- Showcase: the assembled Pages build served statically renders Bench, runs, files and the chat read-only, with only exported runs linked from the matrix.
 
-## Known limits
+## Not verified here
 
-- The model call is non-streaming, so between tool calls the console can only show "Thinking" with a timer and turn number, not text as it is generated. At low reasoning levels tool calls take milliseconds, so a 1.2 s poll mostly observes the thinking state.
-- Replay paces events from their recorded timestamps, which have one-second resolution; events within the same second are spread out evenly.
-- The showcase includes only the runs and chats named in `scripts/export_showcase.py`; files larger than 30 KB are not previewable there.
+A full live run against a real model server, and the console on a physical phone.

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -28,11 +29,12 @@ import server  # noqa: E402  (reuses the console's own read paths)
 
 OUT = ROOT / "site" / "showcase"
 DEFAULT_RUNS = [
-    "matrix-20261011-201925-004-off",       # fails twice, repairs, passes
-    "matrix-20261011-205901-001-deep",      # full static page, first-try pass
-    "matrix-20261011-203757-001-standard",  # static page blocked on patch context
-    "matrix-20261011-205901-003-standard",  # structured validation pass
-    "matrix-20261011-205901-002-off",       # quick file round-trip
+    "matrix-20261016-065825-001-deep",      # static page: a patch accepted on a context miss, repair budget spent
+    "matrix-20261016-065825-001-off",       # static page, first-try pass
+    "matrix-20261016-065825-003-deep",      # structured validation, passed after repair
+    "matrix-20261016-065825-004-standard",  # mini project, first-try pass
+    "matrix-20261016-065825-002-off",       # quick file round-trip
+    "matrix-20261016-170630-001-standard",  # apply_patch withheld: replace_text exhausts its retries
 ]
 DEFAULT_CHATS = ["chat-20261011-221823"]
 MAX_STRING = 2400
@@ -49,12 +51,15 @@ def replacements() -> list[tuple[str, str]]:
 
 
 REPLACEMENTS = replacements()
+# Records copied from another machine carry that machine's home folder.
+FOREIGN_HOME = re.compile(r"[A-Za-z]:(?:\\\\|\\|/)Users(?:\\\\|\\|/)[^\\/\"'\s]+|/(?:home|Users)/[^/\"'\s]+")
 
 
 def clean(value: Any) -> Any:
     if isinstance(value, str):
         for raw, label in REPLACEMENTS:
             value = value.replace(raw, label)
+        value = FOREIGN_HOME.sub("~", value)
         if len(value) > MAX_STRING:
             value = value[:MAX_STRING] + f"\n...[clipped for the showcase; {len(value)} characters]"
         return value
@@ -177,11 +182,12 @@ def main() -> int:
         "reasoning_levels": server.reasoning_options(),
         "provider": server.public_provider({"provider": "local", "model": config.get("model", ""), "endpoint": "showcase recording"}),
         "skills": server.skill_catalog(),
+        "benchmarks": server.benchmark_catalog(),
     })
     (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
 
     blob = "\n".join(p.read_text(encoding="utf-8") for p in OUT.rglob("*.json"))
-    leaks = [raw for raw, _ in REPLACEMENTS if raw and raw in blob]
+    leaks = [raw for raw, _ in REPLACEMENTS if raw and raw in blob] + FOREIGN_HOME.findall(blob)
     if leaks or "reasoning_content" in blob:
         print("refusing: sanitization check failed", file=sys.stderr)
         shutil.rmtree(OUT)

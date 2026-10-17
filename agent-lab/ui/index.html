@@ -1,217 +1,100 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#121512">
-  <meta name="description" content="Agent Lab: an observation console for small language models working inside a bounded harness.">
-  <title>Agent Lab</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="styles.css">
-  <script type="module" src="app.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1113">
+<meta name="description" content="Agent Lab: a flight recorder for a small local coding agent. Replay runs, see where they went wrong, and compare harness experiments.">
+<title>Agent Lab</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/plex-sans-condensed-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <a class="skip" href="#main">Skip to the console</a>
-  <div class="app" id="app">
-    <aside class="rail" id="rail" aria-label="Navigation">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><svg viewBox="-50 -50 100 100"><circle r="27" fill="none" stroke="#a9bd80" stroke-width="4" stroke-dasharray="130 40" transform="rotate(-30)"/><circle r="11" fill="#f2efe6"/><circle cx="31" cy="-22" r="4.5" fill="#a47758"/></svg></span>
-        <div><b>Agent Lab</b><span>observation console</span></div>
+<a class="sr-only" href="#view">Skip to content</a>
+<div class="showcase-strip" id="showcaseStrip" hidden><span><b>SHOWCASE</b> · recorded runs, read-only · nothing here can start work or touch a machine</span><a href="https://github.com/silascroe/lobotomite-harness">source on GitHub</a></div>
+<header class="topbar">
+  <a class="brand" href="#/bench" aria-label="Agent Lab home">
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true"><rect x="1" y="1" width="20" height="20" rx="3" fill="none" stroke="#36434a"/><path d="M3 15h3l2-7 3 10 2-6 2 3h4" fill="none" stroke="#5cc8d9" stroke-width="1.6"/></svg>
+    <span>AGENT LAB</span>
+  </a>
+  <nav class="nav" aria-label="Main">
+    <a href="#/bench" data-nav="bench">Bench</a>
+    <a href="#/runs" data-nav="runs">Runs</a>
+    <a href="#/chats" data-nav="chats">Chats</a>
+  </nav>
+  <span class="spacer"></span>
+  <button type="button" class="chip-button ws desk-only" id="workspaceButton" data-act="workspace" title="Where new runs and chats work"><span class="dim">ws</span> <span id="workspaceLabel">scratch</span></button>
+  <button type="button" class="chip-button" id="providerButton" data-act="provider" title="Model provider"><span class="dot" id="providerDot"></span><span id="providerLabel">model</span></button>
+  <button type="button" class="btn small desk-only" id="newChatButton" data-act="new-chat">New chat</button>
+  <button type="button" class="btn small primary desk-only" id="newRunButton" data-act="new-run">New run</button>
+</header>
+
+<main id="view" tabindex="-1"><div class="loading">CONNECTING</div></main>
+
+<nav class="bottom-nav" aria-label="Main">
+  <a href="#/bench" data-nav="bench"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10m6 10V4m6 16v-7m4 7H2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Bench</a>
+  <a href="#/runs" data-nav="runs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Runs</a>
+  <a href="#/chats" data-nav="chats"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Chats</a>
+  <button type="button" class="new" data-act="new" id="newButton"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M4 12h16" fill="none" stroke="currentColor" stroke-width="2"/></svg>New</button>
+</nav>
+
+<dialog id="runDialog" aria-labelledby="runDialogTitle">
+  <form method="dialog" data-form="run">
+    <div class="dlg-head"><h2 id="runDialogTitle">New run</h2><button type="submit" value="cancel" class="btn icon small" aria-label="Close" formnovalidate>✕</button></div>
+    <div class="dlg-body">
+      <label class="field"><span>preset</span><select id="presetSelect"></select></label>
+      <p class="hint dim" id="presetDescription" style="margin:-8px 0 0"></p>
+      <label class="field"><span>task</span><textarea id="taskText" spellcheck="false"></textarea></label>
+      <label class="check"><input type="checkbox" id="runGated" checked><span>Keep the preset's gates and evaluator, so the result is graded</span></label>
+      <div class="row2">
+        <label class="field"><span>reasoning</span><select id="runReasoning"></select></label>
+        <label class="field"><span>project changes</span><select id="runApproval"><option value="auto">apply automatically</option><option value="confirm">ask me first</option></select></label>
       </div>
-
-      <button class="workspace" id="workspaceButton" type="button" aria-haspopup="dialog">
-        <span class="workspace-kind" id="workspaceKind">Scratch</span>
-        <span class="workspace-name" id="workspaceName">Temporary folder</span>
-        <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5L7.5 6 4 9.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
-
-      <div class="seg" role="tablist" aria-label="Mode">
-        <button role="tab" id="modeChats" type="button" aria-selected="false">Chats</button>
-        <button role="tab" id="modeRuns" type="button" aria-selected="true">Runs</button>
-      </div>
-
-      <button class="primary" id="newButton" type="button"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span id="newLabel">New run</span></button>
-
-      <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6.5a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0-9 0M10 10l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><input id="listSearch" type="search" placeholder="Filter" autocomplete="off" aria-label="Filter the list"></label>
-
-      <div class="list-head"><span id="listHead">Recent runs</span><button class="icon-btn small" id="refreshList" type="button" aria-label="Refresh the list"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 7A5 5 0 0 0 3.6 4.6M3 9a5 5 0 0 0 9.4 2.4M3 2v3h3M13 14v-3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
-      <ul class="records" id="recordList" aria-label="Records"></ul>
-
-      <button class="rail-foot" id="providerButton" type="button" aria-haspopup="dialog">
-        <i id="providerDot"></i><span><b id="providerModel">Local model</b><small id="providerEndpoint">127.0.0.1:8080</small></span>
-      </button>
-    </aside>
-    <div class="scrim" id="scrim" hidden></div>
-
-    <main id="main" tabindex="-1">
-      <header class="top">
-        <button class="icon-btn mobile-only" id="menuButton" type="button" aria-label="Open navigation"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
-        <div class="crumbs" id="crumbs"></div>
-        <div class="spacer"></div>
-        <div class="controls" id="chatControls" hidden>
-          <label class="select"><span>Reasoning</span><select id="reasoningSelect" aria-label="Reasoning level"></select></label>
-          <label class="select"><span>Tools</span><select id="approvalSelect" aria-label="Tool approval mode"><option value="auto">Automatic</option><option value="confirm">Ask first</option></select></label>
-        </div>
-        <div class="controls" id="runChips" hidden></div>
-        <div class="replay" id="replay" hidden>
-          <button class="play" id="replayButton" type="button" aria-label="Replay this run"><svg viewBox="0 0 12 12" aria-hidden="true"><path id="replayIcon" d="M3 1.5v9l7.5-4.5z" fill="currentColor"/></svg></button>
-          <div class="scrub" id="scrub" role="slider" aria-label="Replay position" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"><i id="scrubFill"></i></div>
-          <div class="speed" id="speed" role="group" aria-label="Replay speed"><button type="button" data-speed="1">1×</button><button type="button" data-speed="4" class="on">4×</button><button type="button" data-speed="16">16×</button></div>
-        </div>
-        <button class="ghost" id="detailsButton" type="button" aria-controls="drawer" aria-expanded="false">Details</button>
-      </header>
-
-      <div class="banner" id="banner" hidden></div>
-
-      <section class="view run-view" id="runView" hidden aria-label="Run">
-        <div class="wrap">
-          <section class="chamber" id="chamber">
-            <div class="specimen" id="runSpecimen"></div>
-            <div class="now">
-              <div class="eyebrow"><span class="live" id="liveLabel">Live</span><span class="sep">/</span><span>Turn <b id="turnNo">0</b> of <b id="turnMax">18</b></span><span class="sep">/</span><span id="clock">0:00</span></div>
-              <h1 id="nowTitle">Waking the specimen</h1>
-              <p class="sub" id="nowSub"></p>
-            </div>
-            <div class="chamber-side">
-              <div class="verdict" id="verdict" hidden><span class="stamp" id="stamp"></span><small id="verdictSub"></small></div>
-              <div class="actions" id="runActions"></div>
-            </div>
-          </section>
-
-          <section class="approval" id="runApproval" hidden aria-live="assertive"></section>
-
-          <nav class="phases" id="phases" aria-label="Workflow phases"></nav>
-
-          <div class="grid">
-            <section class="card">
-              <h2>Activity <small id="feedCount"></small></h2>
-              <div class="feed" id="feed" aria-live="polite"></div>
-              <button class="jump" id="jumpButton" type="button" hidden>Jump to latest</button>
-            </section>
-            <aside class="side">
-              <section class="card">
-                <h2>Evaluator <small id="evalLabel">not run yet</small></h2>
-                <div class="checks" id="checks"></div>
-              </section>
-              <section class="card">
-                <h2>Budget <small id="budgetLabel"></small></h2>
-                <div class="budget"><div class="meter" id="meter"></div><div class="bstats"><span>calls <b id="callsUsed">0</b>/<span id="callsMax">18</span> <span id="extNote"></span></span><span>tools <b id="toolsUsed">0</b></span></div></div>
-              </section>
-              <section class="card">
-                <h2>Files <small id="fileCount"></small></h2>
-                <ul class="files" id="files"></ul>
-              </section>
-              <section class="card" id="quoteCard" hidden>
-                <h2>The model's own summary <small>unverified</small></h2>
-                <div class="quote"><p id="quote"></p></div>
-              </section>
-            </aside>
-          </div>
-        </div>
-      </section>
-
-      <section class="view chat-view" id="chatView" hidden aria-label="Conversation">
-        <div class="chat-scroll" id="chatScroll">
-          <div class="chat-col" id="chatMessages" aria-live="polite"></div>
-        </div>
-        <div class="chat-bottom">
-          <div class="chat-col">
-            <div class="job-banner" id="jobBanner" hidden></div>
-            <form class="composer" id="composer">
-              <textarea id="chatInput" rows="1" placeholder="Ask something, or give it a job…" aria-label="Message"></textarea>
-              <div class="composer-row">
-                <span class="composer-meta" id="composerMeta"></span>
-                <button class="ghost danger" id="stopJobButton" type="button" hidden>Stop</button>
-                <button class="send" id="sendButton" type="submit"><span>Send</span><kbd>Ctrl ↵</kbd></button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </section>
-
-      <section class="view empty-view" id="emptyView" hidden aria-label="Start">
-        <div class="empty">
-          <div class="specimen big" id="emptySpecimen"></div>
-          <h1 id="emptyTitle">The specimen is resting.</h1>
-          <p id="emptyCopy">Start a run to watch a small model work through a task, or open a chat.</p>
-          <div class="empty-actions"><button class="primary" id="emptyRun" type="button">Start a run</button><button class="ghost" id="emptyChat" type="button">Open a chat</button></div>
-        </div>
-      </section>
-    </main>
-
-    <aside class="drawer" id="drawer" aria-label="Details" hidden>
-      <header class="drawer-head">
-        <div class="tabs" role="tablist" aria-label="Detail views">
-          <button role="tab" type="button" data-tab="overview" aria-selected="true">Overview</button>
-          <button role="tab" type="button" data-tab="files">Files</button>
-          <button role="tab" type="button" data-tab="changes">Changes</button>
-          <button role="tab" type="button" data-tab="events">Events</button>
-          <button role="tab" type="button" data-tab="output">Output</button>
-        </div>
-        <button class="icon-btn" id="closeDrawer" type="button" aria-label="Close details"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
-      </header>
-      <div class="drawer-body">
-        <section class="pane" data-pane="overview" id="paneOverview"></section>
-        <section class="pane" data-pane="files" id="paneFiles" hidden></section>
-        <section class="pane" data-pane="changes" id="paneChanges" hidden></section>
-        <section class="pane" data-pane="events" id="paneEvents" hidden></section>
-        <section class="pane" data-pane="output" id="paneOutput" hidden></section>
-      </div>
-    </aside>
-  </div>
-
-  <dialog class="dialog" id="runDialog" aria-labelledby="runDialogTitle">
-    <form method="dialog" id="runForm">
-      <header><p class="kicker">New run</p><h2 id="runDialogTitle">Put the specimen to work</h2></header>
-      <label class="field"><span>Starting point</span><select id="presetSelect"></select></label>
-      <p class="hint" id="presetDescription"></p>
-      <label class="field"><span>Task</span><textarea id="taskText" rows="9" spellcheck="false"></textarea></label>
-      <div class="field-row">
-        <label class="field"><span>Reasoning</span><select id="runReasoning"></select></label>
-        <label class="field"><span>Tools</span><select id="runApproval"><option value="auto">Automatic</option><option value="confirm">Ask before changes</option></select></label>
-      </div>
-      <label class="check"><input type="checkbox" id="runGated" checked><span><b>Grade it</b> with the preset's completion gates and evaluator. Off means a free-form custom run that is not a benchmark result.</span></label>
-      <details class="skills" id="skillsBox">
-        <summary>Skills <small id="skillsSummary"></small></summary>
+      <div class="field"><span>workspace</span><button type="button" class="option" data-act="workspace"><b id="runWorkspaceName">Scratch</b><small id="runWorkspaceNote">a fresh disposable folder</small></button></div>
+      <details class="fold"><summary>skills · <span id="skillsSummary" style="text-transform:none">defaults</span></summary>
         <div class="skill-list" id="skillList"></div>
-        <div class="skill-search"><input id="skillQuery" type="search" placeholder="Search the local skill shelf" aria-label="Search skills"><button class="ghost" id="skillSearchButton" type="button">Search</button><button class="ghost" id="skillRemoteButton" type="button">Search skills.sh…</button></div>
-        <div class="skill-results" id="skillResults"></div>
+        <div class="toolbar" style="margin-top:10px"><input type="search" id="skillQuery" placeholder="Find a skill" aria-label="Find a skill" style="height:40px">
+          <button type="button" class="btn small" data-act="skills-local">Search local</button><button type="button" class="btn small" data-act="skills-remote">Search skills.sh</button></div>
+        <div id="skillResults" class="dim" style="font-size:14px"></div>
       </details>
-      <p class="hint">Target: <b id="runTarget">Scratch workspace</b></p>
-      <footer><button class="ghost" value="cancel" type="submit" formnovalidate>Cancel</button><button class="primary" id="startRunButton" type="button">Start run</button></footer>
-    </form>
-  </dialog>
+    </div>
+    <div class="dlg-foot"><button type="submit" value="cancel" class="btn" formnovalidate>Cancel</button><button type="button" class="btn primary" id="startRunButton" data-act="start-run">Start run</button></div>
+  </form>
+</dialog>
 
-  <dialog class="dialog" id="workspaceDialog" aria-labelledby="workspaceDialogTitle">
-    <form method="dialog">
-      <header><p class="kicker">Workspace</p><h2 id="workspaceDialogTitle">Where the specimen works</h2></header>
-      <p class="hint">New chats and runs use this location. Existing records keep the workspace they started in.</p>
-      <div class="ws-options" id="workspaceOptions"></div>
-      <div class="field-row tight"><label class="field"><span>New managed project</span><input id="projectName" placeholder="Project name" autocomplete="off"></label><button class="ghost" id="createProjectButton" type="button">Create</button></div>
-      <div class="field-row tight"><label class="field"><span>Existing folder</span><input id="folderPath" placeholder="C:\path\to\project" autocomplete="off" spellcheck="false"></label><button class="ghost" id="useFolderButton" type="button">Use folder</button></div>
-      <p class="hint warn-text">An existing folder is real filesystem access. Path checks are not a sandbox, and the model can run scripts it writes. Keep secrets out of it.</p>
-      <footer><button class="ghost" value="close" type="submit">Done</button></footer>
-    </form>
-  </dialog>
+<dialog id="workspaceDialog" aria-labelledby="workspaceDialogTitle">
+  <form method="dialog" data-form="workspace">
+    <div class="dlg-head"><h2 id="workspaceDialogTitle">Workspace</h2><button type="submit" value="cancel" class="btn icon small" aria-label="Close" formnovalidate>✕</button></div>
+    <div class="dlg-body">
+      <p class="dim" style="margin:0">New runs and chats work here. Every option is a real folder on this machine; the harness is not a sandbox.</p>
+      <div class="options" id="workspaceOptions"></div>
+      <label class="field"><span>new managed project</span><span style="display:flex;gap:8px;text-transform:none;letter-spacing:0"><input type="text" id="projectName" placeholder="project name" style="flex:1"><button type="button" class="btn" id="createProjectButton" data-act="create-project">Create</button></span></label>
+      <label class="field"><span>existing folder</span><span style="display:flex;gap:8px;text-transform:none;letter-spacing:0"><input type="text" id="folderPath" placeholder="C:\path\to\project" style="flex:1"><button type="button" class="btn" data-act="use-folder">Use</button></span><span class="hint">The model will be able to change files in it. Keep secrets out.</span></label>
+    </div>
+    <div class="dlg-foot"><button type="submit" value="cancel" class="btn">Done</button></div>
+  </form>
+</dialog>
 
-  <dialog class="dialog" id="providerDialog" aria-labelledby="providerDialogTitle">
-    <form method="dialog" id="providerForm">
-      <header><p class="kicker">Model</p><h2 id="providerDialogTitle">Which brain goes in the jar</h2></header>
-      <div class="ws-options" id="providerOptions">
-        <label class="option"><input type="radio" name="provider" value="local" checked><span><b>Local model</b><small>llama.cpp on this machine, the default</small></span></label>
-        <label class="option"><input type="radio" name="provider" value="openai_compatible"><span><b>OpenAI-compatible API</b><small>Same harness, tools and gates; a remote model</small></span></label>
+<dialog id="providerDialog" aria-labelledby="providerDialogTitle">
+  <form method="dialog" data-form="provider">
+    <div class="dlg-head"><h2 id="providerDialogTitle">Model provider</h2><button type="submit" value="cancel" class="btn icon small" aria-label="Close" formnovalidate>✕</button></div>
+    <div class="dlg-body">
+      <label class="check"><input type="radio" name="provider" value="local"><span><b>Local model</b><br><span class="dim">llama.cpp on 127.0.0.1:8080, the default</span></span></label>
+      <label class="check"><input type="radio" name="provider" value="openai_compatible"><span><b>OpenAI-compatible API</b><br><span class="dim">same harness, a remote model</span></span></label>
+      <div id="remoteFields" class="row2">
+        <label class="field"><span>endpoint</span><input type="url" id="providerEndpointInput" placeholder="https://api.example.com/v1/chat/completions"></label>
+        <label class="field"><span>model</span><input type="text" id="providerModelInput" placeholder="model id"></label>
+        <label class="field" style="grid-column:1/-1"><span>api key</span><input type="password" id="providerKeyInput" autocomplete="off" placeholder="kept in this server's memory only"></label>
       </div>
-      <div id="remoteFields" hidden>
-        <label class="field"><span>Endpoint</span><input id="providerEndpointInput" placeholder="https://api.example.com/v1/chat/completions" autocomplete="off" spellcheck="false"></label>
-        <label class="field"><span>Model</span><input id="providerModelInput" placeholder="model-name" autocomplete="off" spellcheck="false"></label>
-        <label class="field"><span>API key</span><input id="providerKeyInput" type="password" placeholder="Held in memory only; leave blank to keep the loaded key" autocomplete="off"></label>
-      </div>
-      <p class="hint" id="providerStatus"></p>
-      <footer><button class="ghost" value="cancel" type="submit" formnovalidate>Cancel</button><button class="primary" id="saveProviderButton" type="button">Use this model</button></footer>
-    </form>
-  </dialog>
+      <p class="dim" id="providerStatus" style="margin:0"></p>
+    </div>
+    <div class="dlg-foot"><button type="submit" value="cancel" class="btn">Cancel</button><button type="button" class="btn primary" id="saveProviderButton" data-act="save-provider">Save</button></div>
+  </form>
+</dialog>
 
-  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script type="module" src="app.js"></script>
 </body>
 </html>

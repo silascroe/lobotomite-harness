@@ -12,7 +12,7 @@ The default provider is the llama.cpp server at 127.0.0.1:8080. An optional Open
 
 | Area | Responsibility |
 | --- | --- |
-| agent-lab/ui/ | `server.py` serves the console and local APIs and manages interactive sessions and run workers. The console is ES modules: `narration.js` derives rows, headline, phase, budget, checks and files from harness events (shared by live view, replay, chats and the showcase), `source.js` selects the live API or recorded showcase files, `specimen.js` animates agent state, and `app.js` renders views. |
+| agent-lab/ui/ | `server.py` serves the console and local APIs and manages interactive sessions and run workers. The console is ES modules with no build step: `model.js` derives recorder lanes, file activity, alarms, verdicts and bench statistics from harness records (shared by the live console, replay and the showcase), `recorder.js` and `views.js` render, `app.js` routes and polls, and `source.js` selects the live API or recorded showcase files. `GET /api/benchmarks` serves matrix batches from `benchmarks/results/` with the experiments named in `benchmarks/experiments.json`. |
 | site/showcase/ and scripts/export_showcase.py | Sanitized recordings of selected runs and chats. GitHub Pages serves the unmodified console against them in read-only mode. |
 | agent-lab/harness/agent_harness.py | Owns the agent loop, provider calls, action validation and dispatch, finish gates, and run/session logging. Supporting modules separate workflow, recovery, context limits, approvals, persistence, review packets, job state, skills, and workspace locks. |
 | agent-lab/harness/provider.py | Selects the configured local provider or optional OpenAI-compatible chat-completions provider. Both use the same harness controls. |

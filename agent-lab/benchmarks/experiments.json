@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "question": "How much does each part of the harness lift a 2B model?",
+  "model": "Gemma-4-E2B-Q4_0",
+  "experiments": [
+    {
+      "id": "baseline-20261016",
+      "title": "Baseline",
+      "status": "done",
+      "checkers": "behavioral",
+      "reference": true,
+      "batches": ["matrix-20261016-065825", "matrix-20261016-072523", "matrix-20261016-074931"],
+      "report": "2026-10-16-behavioral-baseline.md"
+    },
+    {
+      "id": "no-apply-patch-20261016",
+      "title": "apply_patch withheld",
+      "status": "done",
+      "checkers": "behavioral",
+      "compare_to": "baseline-20261016",
+      "batches": ["matrix-20261016-164642", "matrix-20261016-170630", "matrix-20261016-172837"],
+      "report": "2026-10-16-no-apply-patch-ablation.md"
+    },
+    {"id": "show-edited-region", "title": "Show the edited region after each edit", "status": "planned", "note": "suggested by the apply_patch ablation"},
+    {"id": "no-plan-gate", "title": "Plan gate off", "status": "planned"},
+    {"id": "no-repair", "title": "Repair off", "status": "planned"},
+    {"id": "one-shot", "title": "No harness, one shot", "status": "planned", "note": "floor"},
+    {"id": "api-ceiling", "title": "API model, same harness", "status": "planned", "note": "ceiling"}
+  ]
+}

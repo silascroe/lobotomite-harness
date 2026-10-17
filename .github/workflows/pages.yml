@@ -35,12 +35,13 @@ jobs:
       - name: Test and assemble the showcase
         shell: bash
         run: |
-          for f in app.js narration.js source.js specimen.js; do node --check "agent-lab/ui/$f"; done
-          node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_narration.mjs
+          for f in app.js model.js views.js recorder.js source.js; do node --check "agent-lab/ui/$f"; done
           test -f site/showcase/manifest.json
+          node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_model.mjs
           mkdir -p _site
-          cp agent-lab/ui/index.html agent-lab/ui/app.js agent-lab/ui/narration.js agent-lab/ui/source.js \
-             agent-lab/ui/specimen.js agent-lab/ui/styles.css agent-lab/ui/favicon.svg _site/
+          cp agent-lab/ui/index.html agent-lab/ui/app.js agent-lab/ui/model.js agent-lab/ui/views.js \
+             agent-lab/ui/recorder.js agent-lab/ui/source.js agent-lab/ui/styles.css agent-lab/ui/favicon.svg _site/
+          cp -r agent-lab/ui/fonts _site/fonts
           cp -r site/showcase _site/showcase
           touch _site/.nojekyll
 

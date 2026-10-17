@@ -28,8 +28,13 @@ HARNESS = ROOT / "agent-lab" / "harness" / "agent_harness.py"
 CONFIG = ROOT / "agent-lab" / "harness" / "config.json"
 RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,50}")
 STATIC_CACHE_CONTROL = "no-store, max-age=0"
-STATIC_FILES = {"app.js", "narration.js", "source.js", "specimen.js", "styles.css", "favicon.svg"}
-STATIC_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".html": "text/html"}
+STATIC_FILES = {"app.js", "model.js", "views.js", "recorder.js", "source.js", "styles.css", "favicon.svg"} | {
+    f"fonts/{name}.woff2" for name in (
+        "plex-mono-400", "plex-mono-500", "plex-mono-600",
+        "plex-sans-condensed-400", "plex-sans-condensed-500", "plex-sans-condensed-600", "plex-sans-condensed-700",
+    )
+}
+STATIC_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".html": "text/html", ".woff2": "font/woff2"}
 
 sys.path.insert(0, str(HARNESS.parent))
 from agent_harness import (  # noqa: E402
@@ -354,6 +359,52 @@ def task_catalog() -> list[dict[str, Any]]:
     return tasks
 
 
+BENCHMARKS_DIR = ROOT / "agent-lab" / "benchmarks"
+BATCH_FILE_RE = re.compile(r"matrix-\d{8}-\d{6}\.json")
+BATCH_RESULT_FIELDS = (
+    "task", "reasoning_level", "run_id", "passed", "status", "failure_cause", "first_pass_passed",
+    "repair_outcome", "model_calls", "tool_calls", "elapsed_seconds", "extension_turns_used", "final_finding_ids",
+)
+
+
+def benchmark_catalog() -> dict[str, Any]:
+    """Matrix batches and the named experiments that group them, read-only."""
+    batches: list[dict[str, Any]] = []
+    results_dir = BENCHMARKS_DIR / "results"
+    if results_dir.is_dir():
+        for path in sorted(results_dir.glob("matrix-*.json")):
+            if not BATCH_FILE_RE.fullmatch(path.name):
+                continue
+            data = read_json(path)
+            if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+                continue
+            rows = []
+            for result in data["results"]:
+                if not isinstance(result, dict):
+                    continue
+                row = {key: result.get(key) for key in BATCH_RESULT_FIELDS}
+                row["failure_cause"] = str(row.get("failure_cause") or "")[:300]
+                run_id = str(row.get("run_id") or "")
+                row["has_record"] = bool(RUN_ID_RE.fullmatch(run_id)) and (RUNS_DIR / run_id).is_dir()
+                rows.append(row)
+            if rows:
+                batches.append({
+                    "batch_id": str(data.get("batch_id") or path.stem),
+                    "model": str(data.get("model") or ""),
+                    "variant": str(data.get("variant") or ""),
+                    "disabled_actions": [str(item) for item in data.get("disabled_actions") or []],
+                    "results": rows,
+                })
+    plan = read_json(BENCHMARKS_DIR / "experiments.json") or {}
+    experiments = plan.get("experiments") if isinstance(plan.get("experiments"), list) else []
+    return {
+        "question": str(plan.get("question") or ""),
+        "model": str(plan.get("model") or ""),
+        "experiments": [item for item in experiments if isinstance(item, dict)],
+        "batches": batches,
+    }
+
+
 def skill_catalog(raw_project_path: Any = None) -> dict[str, Any]:
     project_path = None
     if isinstance(raw_project_path, str) and raw_project_path.strip():
@@ -507,6 +558,7 @@ def run_state(run_id: str) -> dict[str, Any]:
         "tool_calls": summary.get("tool_calls", progress.get("tool_calls", 0)),
         "context": summary.get("context", progress.get("context", {})),
         "max_turns": saved_config.get("max_turns"),
+        "model_context_tokens": saved_config.get("model_context_tokens"),
         "reasoning": summary.get("reasoning") or {"level": saved_config.get("reasoning_level")},
     }
 
@@ -1564,7 +1616,8 @@ class Handler(BaseHTTPRequestHandler):
         # refuse for ES modules; pin the types the console actually serves.
         content_type = STATIC_TYPES.get(path.suffix.lower()) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self.send_response(200)
-        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        textual = content_type.startswith("text/") or content_type.endswith(("+xml", "json"))
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8" if textual else content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", STATIC_CACHE_CONTROL)
         self.end_headers()
@@ -1592,6 +1645,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(skill_catalog(project_path))
             if path == "/api/tasks":
                 return self.send_json({"tasks": task_catalog()})
+            if path == "/api/benchmarks":
+                return self.send_json(benchmark_catalog())
             if path == "/api/projects":
                 return self.send_json({"projects": project_catalog()})
             if path == "/api/sessions":

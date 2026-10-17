@@ -51,6 +51,7 @@ export class LiveSource {
   session(id) { return this.request(`/api/sessions/${encodeURIComponent(id)}`); }
   sessionFile(id, path) { return this.request(`/api/sessions/${encodeURIComponent(id)}/file/${filePath(path)}`); }
   tasks() { return this.request("/api/tasks").then((d) => d.tasks || []); }
+  benchmarks() { return this.request("/api/benchmarks"); }
   projects() { return this.request("/api/projects").then((d) => d.projects || []); }
   skills(projectPath = "") {
     const query = projectPath ? `?project_path=${encodeURIComponent(projectPath)}` : "";
@@ -112,6 +113,7 @@ export class ShowcaseSource {
   session(id) { return this.load(`sessions/${encodeURIComponent(id)}.json`); }
   async sessionFile() { throw new Error("Chat files are not included in the showcase recording."); }
   tasks() { return this.manifest().then((m) => m.tasks || []); }
+  benchmarks() { return this.manifest().then((m) => m.benchmarks || { experiments: [], batches: [] }); }
   projects() { return Promise.resolve([]); }
   skills() { return this.manifest().then((m) => m.skills || { defaults: [], skills: [] }); }
   provider() { return this.manifest().then((m) => m.provider || { provider: "local", label: "Local model", model: "" }); }

@@ -10,9 +10,11 @@ There is also a small desk console for launching and inspecting runs:
 
 Open [http://127.0.0.1:8787](http://127.0.0.1:8787). It is bound to loopback only, and it also refuses requests whose `Host` or `Origin` header is not `127.0.0.1`, `localhost` or `[::1]` on that port, plus any POST that is not `application/json`. That blocks web pages from driving the console (cross-site requests, DNS rebinding) and means a Cloudflare-style tunnel will get `403`; that is deliberate, because anyone who can reach this API can start a model that writes and runs code on this machine. Remote access needs an authenticated layer in front, not a hole in this check. The console can launch benchmark tasks with their evaluator, or custom tasks with the benchmark gates switched off.
 
-The console is an observation view rather than a log viewer. A run page leads with the evaluator's verdict and first-pass versus repaired outcome; a live headline and activity feed narrate each tool call as it happens ("Reading `styles.css`" becomes "Read `styles.css`"); evaluator checks flip as each evaluation lands; and an animated specimen shows the agent's state (thinking, using a tool, waiting, passed, failed). The model's own finish summary is shown last and labelled unverified. Any recorded run can be replayed at 1×, 4× or 16× from its complete event log. Chats show the same narration live and fold each reply's tool work into a "Worked through N steps" disclosure. The Details drawer holds the inspector, project files, the review diff, raw events (without model reasoning) and process output.
+The console is a flight recorder for runs. **Bench** (the home page) shows every experiment as a pass rate with its 95% interval against the reference baseline, then the full task × reasoning × batch matrix with a failure-cause code in every failed cell; batches come from `benchmarks/results/`, grouped and named by `benchmarks/experiments.json`. **Runs** lists every recorded run. A run opens on its verdict (first-try pass, passed after repair, or the blocking cause) and five views: **Recorder**, a time-aligned strip of phase, output tokens, prompt tokens against the window, tool calls, context kept and gates, with the repair episode shaded and any turn one click away; **Process**, the workflow drawn as a process line with the finish gate, the evaluator and the repair recycle, plus an ISA-style alarm list and gauges; **Files**, what the model did to each file on each turn, including patches the harness accepted although their context matched nothing; **Checks**, every evaluation, the finish gates, the review packet and the model's own summary (labelled unverified); and **Log**, raw events without model reasoning, plus process output. Any run replays from its event log at 1–64×. Chats keep send, stop, retry, approvals, per-chat reasoning and approval settings, and fold each reply's tool work above it.
 
-The UI is plain ES modules served by `server.py` with no build step: `narration.js` turns harness events into what the console shows and is shared by live view, replay, chats and the showcase; `source.js` talks either to the local API or to recorded showcase files; `specimen.js` draws the animated cell; `app.js` holds the views. Fonts are local Windows faces, so the console works offline.
+On a phone the layout changes rather than shrinks: navigation moves to a bottom tab bar, the recorder becomes a vertical tape (one row per turn; tap to open it), the process line runs top to bottom, and the file grid transposes to turns × files.
+
+The UI is plain ES modules served by `server.py` with no build step: `model.js` derives everything shown from harness records (recorder lanes, file activity, alarms, verdicts, bench statistics) and is shared by the live console, replay and the showcase; `recorder.js` draws the instruments; `views.js` the pages; `app.js` owns routing, polling, replay and actions; `source.js` talks either to the local API or to recorded showcase files. IBM Plex Mono and IBM Plex Sans Condensed are bundled in `ui/fonts/` (SIL Open Font License), so the console works offline.
 
 ### Real project workspaces
 
@@ -241,15 +243,15 @@ foreach ($area in @('harness', 'checks', 'ui', 'benchmarks')) {
 
 $node = Join-Path $env:USERPROFILE '.codex\tools\node\node-v24.21.0-win-x64\node.exe'
 if (-not (Test-Path -LiteralPath $node)) { $node = 'node' }
-& $node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_narration.mjs
-if ($LASTEXITCODE -ne 0) { throw 'UI contract or narration tests failed' }
-foreach ($module in @('app.js', 'narration.js', 'source.js', 'specimen.js')) {
+& $node --test agent-lab/ui/test_ui_contract.mjs agent-lab/ui/test_model.mjs
+if ($LASTEXITCODE -ne 0) { throw 'UI contract or model tests failed' }
+foreach ($module in @('app.js', 'model.js', 'views.js', 'recorder.js', 'source.js')) {
     & $node --check "agent-lab/ui/$module"
     if ($LASTEXITCODE -ne 0) { throw "UI syntax check failed: $module" }
 }
 ```
 
-This exercises the harness, checker, UI-server, benchmark, console contract and narration suites. It does not start a model server or run the slower Gemma matrix.
+This exercises the harness, checker, UI-server, benchmark, console contract and console model suites (the model suite reads the committed showcase recordings). It does not start a model server or run the slower Gemma matrix.
 
 ### Public showcase
 

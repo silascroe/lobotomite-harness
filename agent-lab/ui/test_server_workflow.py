@@ -56,6 +56,33 @@ class ServerWorkflowTests(unittest.TestCase):
         MODULE.SESSION_DIR = root / "sessions"
         MODULE.RUNS_DIR = root / "runs"
 
+    def test_benchmark_catalog_reads_batches_and_experiments_without_leaking_extra_fields(self) -> None:
+        root = Path(self.temp_dir.name) / "benchmarks"
+        (root / "results").mkdir(parents=True)
+        MODULE.RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (MODULE.RUNS_DIR / "matrix-20261016-065825-001-off").mkdir()
+        batch = {"batch_id": "matrix-20261016-065825", "model": "local", "variant": "baseline", "results": [
+            {"task": "001-static-page.md", "reasoning_level": "off", "run_id": "matrix-20261016-065825-001-off",
+             "passed": True, "first_pass_passed": True, "changed_files": ["index.html"], "failure_cause": ""},
+            {"task": "001-static-page.md", "reasoning_level": "deep", "run_id": "matrix-20261016-065825-001-deep",
+             "passed": False, "failure_cause": "x" * 900},
+        ]}
+        (root / "results" / "matrix-20261016-065825.json").write_text(json.dumps(batch), encoding="utf-8")
+        (root / "results" / "matrix-20261016-065825-001-off.log").write_text("log", encoding="utf-8")
+        (root / "results" / "regrade-20261016-081724.json").write_text("{}", encoding="utf-8")
+        (root / "experiments.json").write_text(json.dumps({"question": "q", "experiments": [
+            {"id": "baseline", "batches": ["matrix-20261016-065825"]}, "not an object"]}), encoding="utf-8")
+        with patch.object(MODULE, "BENCHMARKS_DIR", root):
+            catalog = MODULE.benchmark_catalog()
+        self.assertEqual(catalog["question"], "q")
+        self.assertEqual([e["id"] for e in catalog["experiments"]], ["baseline"])
+        self.assertEqual(len(catalog["batches"]), 1)
+        rows = catalog["batches"][0]["results"]
+        self.assertNotIn("changed_files", rows[0])
+        self.assertTrue(rows[0]["has_record"])
+        self.assertFalse(rows[1]["has_record"])
+        self.assertEqual(len(rows[1]["failure_cause"]), 300)
+
     def tearDown(self) -> None:
         MODULE.SESSIONS.clear()
         MODULE.PROCESSES.clear()
@@ -1053,7 +1080,7 @@ class ServerWorkflowTests(unittest.TestCase):
     def test_console_modules_are_served_as_javascript(self) -> None:
         status, _ = self._raw_request("GET", "/api/health", headers={"Host": "127.0.0.1:{port}"})
         self.assertEqual(status, 200)
-        for name in ("app.js", "narration.js", "source.js", "specimen.js"):
+        for name in ("app.js", "model.js", "views.js", "recorder.js", "source.js"):
             self.assertIn(name, MODULE.STATIC_FILES)
         self.assertEqual(MODULE.STATIC_TYPES[".js"], "text/javascript")
 

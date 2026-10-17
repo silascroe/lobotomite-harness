@@ -1,10 +1,84 @@
 {
- "generated_at": "2026-10-12T02:19:53+00:00",
+ "generated_at": "2026-10-17T13:47:42+00:00",
  "runs": [
   {
-   "run_id": "matrix-20261011-201925-004-off",
+   "run_id": "matrix-20261016-065825-001-deep",
+   "status": "blocked",
+   "summary": "evaluator repair extension exhausted; remaining checks: empty_state, semantic_structure",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "001-static-page.md",
+    "title": "Static page smoke test",
+    "description": "Full UI build benchmark with an external static-page evaluator.",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_static_page.py"
+    }
+   },
+   "elapsed_seconds": 301.3,
+   "reasoning_level": "deep",
+   "first_pass_passed": false,
+   "model_calls": 24
+  },
+  {
+   "run_id": "matrix-20261016-065825-001-off",
    "status": "success",
-   "summary": "The project has been created with index.html, styles.css, and app.js. The application logic was implemented to cycle a status message between 'Seed planted' and 'Watering cycle active'. The layout is responsive and adheres to the initial requirements. Validation via node --check app.js passed, and the latest git_diff confirms the final state.",
+   "summary": "Created index.html, styles.css, and app.js for the Northstar Field Notes application. The application was implemented and validated successfully with exit code 0. The final change review was performed via git_diff.",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "001-static-page.md",
+    "title": "Static page smoke test",
+    "description": "Full UI build benchmark with an external static-page evaluator.",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_static_page.py"
+    }
+   },
+   "elapsed_seconds": 71.94,
+   "reasoning_level": "off",
+   "first_pass_passed": true,
+   "model_calls": 10
+  },
+  {
+   "run_id": "matrix-20261016-065825-003-deep",
+   "status": "success",
+   "summary": "The health report artifact and the validation script were created. The validation command executed successfully with exit code 0, confirming that health-report.json is a valid JSON structure meeting all specified criteria.",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "003-structured-validation.md",
+    "title": "Structured validation smoke test",
+    "description": "Create a small machine-readable report and validate its shape locally.",
+    "gates": {
+     "required_files": [
+      "health-report.json",
+      "validate-report.mjs"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_structured_validation.py"
+    }
+   },
+   "elapsed_seconds": 332.78,
+   "reasoning_level": "deep",
+   "first_pass_passed": false,
+   "model_calls": 23
+  },
+  {
+   "run_id": "matrix-20261016-065825-004-standard",
+   "status": "success",
+   "summary": "The project 'Signal Garden' has been built. Three dependency-free files (index.html, styles.css, app.js) were created. The page contains a heading, description, a primary action button, and a status element. The interactive logic in app.js was validated successfully by running 'node --check app.js', and the final state was reviewed via git_diff.",
    "model": "Gemma-4-E2B-Q4_0",
    "task_profile": {
     "name": "004-mini-project.md",
@@ -21,89 +95,15 @@
      "evaluator": "agent-lab/checks/check_mini_project.py"
     }
    },
-   "elapsed_seconds": 114.71,
-   "reasoning_level": "off",
-   "first_pass_passed": false,
-   "model_calls": 17
-  },
-  {
-   "run_id": "matrix-20261011-205901-001-deep",
-   "status": "success",
-   "summary": "The self-contained single-page site for Northstar Field Notes has been created with index.html, styles.css, and app.js. The structure includes a hero section, a submission form, dynamic rendering of observations, and styling matching the dark/warm aesthetic. The application passed the validation check (node --check app.js exit code 0) and the final changes were reviewed via git_diff.",
-   "model": "Gemma-4-E2B-Q4_0",
-   "task_profile": {
-    "name": "001-static-page.md",
-    "title": "Static page smoke test",
-    "description": "Full UI build benchmark with an external static-page evaluator.",
-    "gates": {
-     "required_files": [
-      "index.html",
-      "styles.css",
-      "app.js"
-     ],
-     "require_validation": true,
-     "require_workflow_gates": true,
-     "evaluator": "agent-lab/checks/check_static_page.py"
-    }
-   },
-   "elapsed_seconds": 79.66,
-   "reasoning_level": "deep",
-   "first_pass_passed": true,
-   "model_calls": 9
-  },
-  {
-   "run_id": "matrix-20261011-203757-001-standard",
-   "status": "blocked",
-   "summary": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
-   "model": "Gemma-4-E2B-Q4_0",
-   "task_profile": {
-    "name": "001-static-page.md",
-    "title": "Static page smoke test",
-    "description": "Full UI build benchmark with an external static-page evaluator.",
-    "gates": {
-     "required_files": [
-      "index.html",
-      "styles.css",
-      "app.js"
-     ],
-     "require_validation": true,
-     "require_workflow_gates": true,
-     "evaluator": "agent-lab/checks/check_static_page.py"
-    }
-   },
-   "elapsed_seconds": 136.79,
-   "reasoning_level": "standard",
-   "first_pass_passed": false,
-   "model_calls": 13
-  },
-  {
-   "run_id": "matrix-20261011-205901-003-standard",
-   "status": "success",
-   "summary": "Generated health-report.json and validate-report.mjs. The validation script passed successfully, confirming the artifact meets the requirements.",
-   "model": "Gemma-4-E2B-Q4_0",
-   "task_profile": {
-    "name": "003-structured-validation.md",
-    "title": "Structured validation smoke test",
-    "description": "Create a small machine-readable report and validate its shape locally.",
-    "gates": {
-     "required_files": [
-      "health-report.json",
-      "validate-report.mjs"
-     ],
-     "require_validation": true,
-     "require_workflow_gates": true,
-     "evaluator": "agent-lab/checks/check_structured_validation.py"
-    }
-   },
-   "elapsed_seconds": 48.35,
+   "elapsed_seconds": 88.67,
    "reasoning_level": "standard",
    "first_pass_passed": true,
-   "model_calls": 10
+   "model_calls": 11
   },
   {
-   "run_id": "matrix-20261011-205901-002-off",
+   "run_id": "matrix-20261016-065825-002-off",
    "status": "success",
-   "summary": "Created agent-check.md and agent-check.mjs. The validation command 'node --check agent-check.mjs' executed successfully with exit code 0, confirming the JavaScript module is valid.",
+   "summary": "Successfully created agent-check.md and agent-check.mjs and validated the JavaScript module with node --check, which returned exit code 0. Project completed.",
    "model": "Gemma-4-E2B-Q4_0",
    "task_profile": {
     "name": "002-file-roundtrip.md",
@@ -119,10 +119,35 @@
      "evaluator": "agent-lab/checks/check_file_roundtrip.py"
     }
    },
-   "elapsed_seconds": 11.56,
+   "elapsed_seconds": 13.86,
    "reasoning_level": "off",
    "first_pass_passed": true,
    "model_calls": 7
+  },
+  {
+   "run_id": "matrix-20261016-170630-001-standard",
+   "status": "blocked",
+   "summary": "recovery exhausted for tool_failure after 2 attempts: replace_text: replace_text would not change the file",
+   "model": "Gemma-4-E2B-Q4_0",
+   "task_profile": {
+    "name": "001-static-page.md",
+    "title": "Static page smoke test",
+    "description": "Full UI build benchmark with an external static-page evaluator.",
+    "gates": {
+     "required_files": [
+      "index.html",
+      "styles.css",
+      "app.js"
+     ],
+     "require_validation": true,
+     "require_workflow_gates": true,
+     "evaluator": "agent-lab/checks/check_static_page.py"
+    }
+   },
+   "elapsed_seconds": 217.53,
+   "reasoning_level": "standard",
+   "first_pass_passed": false,
+   "model_calls": 16
   }
  ],
  "sessions": [
@@ -297,6 +322,1359 @@
     "content_hash": "8ecbf35f77c692ad5159ec2771262a0558e6c94c9ba3ecb38e16aa134ccaec37",
     "quality": "Trusted bundled instruction; authored for Agent Lab.",
     "activatable": true
+   }
+  ]
+ },
+ "benchmarks": {
+  "question": "How much does each part of the harness lift a 2B model?",
+  "model": "Gemma-4-E2B-Q4_0",
+  "experiments": [
+   {
+    "id": "baseline-20261016",
+    "title": "Baseline",
+    "status": "done",
+    "checkers": "behavioral",
+    "reference": true,
+    "batches": [
+     "matrix-20261016-065825",
+     "matrix-20261016-072523",
+     "matrix-20261016-074931"
+    ],
+    "report": "2026-10-16-behavioral-baseline.md"
+   },
+   {
+    "id": "no-apply-patch-20261016",
+    "title": "apply_patch withheld",
+    "status": "done",
+    "checkers": "behavioral",
+    "compare_to": "baseline-20261016",
+    "batches": [
+     "matrix-20261016-164642",
+     "matrix-20261016-170630",
+     "matrix-20261016-172837"
+    ],
+    "report": "2026-10-16-no-apply-patch-ablation.md"
+   },
+   {
+    "id": "show-edited-region",
+    "title": "Show the edited region after each edit",
+    "status": "planned",
+    "note": "suggested by the apply_patch ablation"
+   },
+   {
+    "id": "no-plan-gate",
+    "title": "Plan gate off",
+    "status": "planned"
+   },
+   {
+    "id": "no-repair",
+    "title": "Repair off",
+    "status": "planned"
+   },
+   {
+    "id": "one-shot",
+    "title": "No harness, one shot",
+    "status": "planned",
+    "note": "floor"
+   },
+   {
+    "id": "api-ceiling",
+    "title": "API model, same harness",
+    "status": "planned",
+    "note": "ceiling"
+   }
+  ],
+  "batches": [
+   {
+    "batch_id": "matrix-20261016-065825",
+    "model": "local",
+    "variant": "",
+    "disabled_actions": [],
+    "results": [
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-065825-001-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 71.94,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": true
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-065825-001-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 101.47,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-065825-001-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "evaluator repair extension exhausted; remaining checks: empty_state, semantic_structure",
+      "first_pass_passed": false,
+      "repair_outcome": "budget_exhausted",
+      "model_calls": 24,
+      "tool_calls": 21,
+      "elapsed_seconds": 301.3,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "empty_state",
+       "semantic_structure"
+      ],
+      "has_record": true
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-065825-002-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 7,
+      "tool_calls": 6,
+      "elapsed_seconds": 13.86,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": true
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-065825-002-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 44.77,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-065825-002-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 47.89,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-065825-003-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 15,
+      "tool_calls": 12,
+      "elapsed_seconds": 65.3,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-065825-003-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 17,
+      "tool_calls": 15,
+      "elapsed_seconds": 189.81,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-065825-003-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": false,
+      "repair_outcome": "passed",
+      "model_calls": 23,
+      "tool_calls": 20,
+      "elapsed_seconds": 332.78,
+      "extension_turns_used": 5,
+      "final_finding_ids": [],
+      "has_record": true
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-065825-004-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 18,
+      "tool_calls": 14,
+      "elapsed_seconds": 164.23,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "action_updates_status",
+       "keyboard_operable",
+       "responsive_layout"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-065825-004-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 88.67,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": true
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-065825-004-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "reached the 18-turn limit without a finish action",
+      "first_pass_passed": null,
+      "repair_outcome": null,
+      "model_calls": 18,
+      "tool_calls": 16,
+      "elapsed_seconds": 189.77,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     }
+    ]
+   },
+   {
+    "batch_id": "matrix-20261016-072523",
+    "model": "local",
+    "variant": "",
+    "disabled_actions": [],
+    "results": [
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-072523-001-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: workflow_checkpoint: plan checkpoint requires successful project inspection first",
+      "first_pass_passed": null,
+      "repair_outcome": null,
+      "model_calls": 2,
+      "tool_calls": 2,
+      "elapsed_seconds": 3.88,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-072523-001-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "evaluator repair extension exhausted; remaining checks: empty_state",
+      "first_pass_passed": false,
+      "repair_outcome": "budget_exhausted",
+      "model_calls": 24,
+      "tool_calls": 22,
+      "elapsed_seconds": 251.25,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "empty_state"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-072523-001-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 12,
+      "tool_calls": 10,
+      "elapsed_seconds": 122.86,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-072523-002-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 7,
+      "tool_calls": 6,
+      "elapsed_seconds": 14.61,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-072523-002-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 44.03,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-072523-002-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 31.19,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-072523-003-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "evaluator repair extension exhausted; remaining checks: validator_rejects_missing_generated_for, validator_rejects_unnamed_check",
+      "first_pass_passed": false,
+      "repair_outcome": "budget_exhausted",
+      "model_calls": 24,
+      "tool_calls": 22,
+      "elapsed_seconds": 141.84,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-072523-003-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": false,
+      "repair_outcome": "passed",
+      "model_calls": 22,
+      "tool_calls": 19,
+      "elapsed_seconds": 328.14,
+      "extension_turns_used": 4,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-072523-003-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for finish_rejected after 2 attempts: success is not accepted yet; workflow evidence missing: verify, review",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 15,
+      "tool_calls": 11,
+      "elapsed_seconds": 166.51,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "two_named_checks",
+       "validator_accepts_valid",
+       "validator_prints_success",
+       "validator_rejects_bad_shape",
+       "validator_rejects_bad_status",
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-072523-004-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 31.17,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-072523-004-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 52.67,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-072523-004-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 24,
+      "tool_calls": 22,
+      "elapsed_seconds": 254.45,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "responsive_layout"
+      ],
+      "has_record": false
+     }
+    ]
+   },
+   {
+    "batch_id": "matrix-20261016-074931",
+    "model": "local",
+    "variant": "",
+    "disabled_actions": [],
+    "results": [
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-074931-001-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 15,
+      "tool_calls": 12,
+      "elapsed_seconds": 110.12,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "count_updates",
+       "keeps_all_cards",
+       "readable_contrast",
+       "runs_without_errors",
+       "submit_adds_card"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-074931-001-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "evaluator repair extension exhausted; remaining checks: count_updates, empty_state, runs_without_errors",
+      "first_pass_passed": false,
+      "repair_outcome": "budget_exhausted",
+      "model_calls": 24,
+      "tool_calls": 21,
+      "elapsed_seconds": 300.42,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "count_updates",
+       "empty_state",
+       "runs_without_errors"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-074931-001-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 89.36,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-074931-002-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 7,
+      "tool_calls": 6,
+      "elapsed_seconds": 13.39,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-074931-002-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 56.64,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-074931-002-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 38.39,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-074931-003-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+      "first_pass_passed": null,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 10,
+      "elapsed_seconds": 31.89,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-074931-003-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": false,
+      "repair_outcome": "passed",
+      "model_calls": 23,
+      "tool_calls": 19,
+      "elapsed_seconds": 356.8,
+      "extension_turns_used": 5,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-074931-003-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "evaluator repair extension exhausted; remaining checks: validator_rejects_unnamed_check",
+      "first_pass_passed": false,
+      "repair_outcome": "budget_exhausted",
+      "model_calls": 24,
+      "tool_calls": 21,
+      "elapsed_seconds": 348.47,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-074931-004-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 29.23,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-074931-004-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: apply_patch: could not find update-patch context in the target file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 14,
+      "tool_calls": 12,
+      "elapsed_seconds": 156.97,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "responsive_layout"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-074931-004-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 68.38,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     }
+    ]
+   },
+   {
+    "batch_id": "matrix-20261016-164642",
+    "model": "local",
+    "variant": "no-apply-patch",
+    "disabled_actions": [
+     "apply_patch"
+    ],
+    "results": [
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-164642-001-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for duplicate_action after 2 attempts: the model repeated replace_text with the same arguments",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 16,
+      "tool_calls": 11,
+      "elapsed_seconds": 98.3,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "empty_state",
+       "runs_without_errors"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-164642-001-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 92.92,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-164642-001-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 96.09,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-164642-002-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 7,
+      "tool_calls": 6,
+      "elapsed_seconds": 13.89,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-164642-002-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 47.95,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-164642-002-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 36.16,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-164642-003-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: replace_text: replace_text would not change the file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 13,
+      "tool_calls": 11,
+      "elapsed_seconds": 39.17,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-164642-003-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": false,
+      "repair_outcome": "passed",
+      "model_calls": 22,
+      "tool_calls": 18,
+      "elapsed_seconds": 291.03,
+      "extension_turns_used": 4,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-164642-003-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for duplicate_action after 2 attempts: the model repeated write_file with the same arguments",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 22,
+      "tool_calls": 17,
+      "elapsed_seconds": 299.2,
+      "extension_turns_used": 4,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-164642-004-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 33.06,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-164642-004-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: workflow_checkpoint: cannot transition from review to verify",
+      "first_pass_passed": null,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 10,
+      "elapsed_seconds": 58.48,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-164642-004-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 75.09,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     }
+    ]
+   },
+   {
+    "batch_id": "matrix-20261016-170630",
+    "model": "local",
+    "variant": "no-apply-patch",
+    "disabled_actions": [
+     "apply_patch"
+    ],
+    "results": [
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-170630-001-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: replace_text: replace_text would not change the file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 20,
+      "tool_calls": 18,
+      "elapsed_seconds": 157.77,
+      "extension_turns_used": 2,
+      "final_finding_ids": [
+       "count_updates",
+       "keeps_all_cards",
+       "runs_without_errors",
+       "submit_adds_card"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-170630-001-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: replace_text: replace_text would not change the file",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 16,
+      "tool_calls": 14,
+      "elapsed_seconds": 217.53,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "count_updates",
+       "keeps_all_cards",
+       "labeled_fields",
+       "runs_without_errors",
+       "semantic_structure",
+       "submit_adds_card"
+      ],
+      "has_record": true
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-170630-001-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for duplicate_action after 2 attempts: the model repeated read_file with the same arguments",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 15,
+      "tool_calls": 12,
+      "elapsed_seconds": 127.89,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "count_updates",
+       "empty_state"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-170630-002-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 7,
+      "tool_calls": 6,
+      "elapsed_seconds": 10.33,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-170630-002-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 37.41,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-170630-002-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 40.64,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-170630-003-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for duplicate_action after 2 attempts: the model repeated replace_text with the same arguments",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 14,
+      "tool_calls": 11,
+      "elapsed_seconds": 65.27,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-170630-003-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: replace_text: expected 1 exact replacements, found 0; file was not changed",
+      "first_pass_passed": null,
+      "repair_outcome": null,
+      "model_calls": 7,
+      "tool_calls": 7,
+      "elapsed_seconds": 61.08,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-170630-003-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": false,
+      "repair_outcome": "passed",
+      "model_calls": 21,
+      "tool_calls": 18,
+      "elapsed_seconds": 309.86,
+      "extension_turns_used": 3,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-170630-004-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 73.27,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-170630-004-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for tool_failure after 2 attempts: replace_text: expected 1 exact replacements, found 0; file was not changed",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 14,
+      "tool_calls": 11,
+      "elapsed_seconds": 146.41,
+      "extension_turns_used": 0,
+      "final_finding_ids": [
+       "semantic_main"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-170630-004-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 74.41,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     }
+    ]
+   },
+   {
+    "batch_id": "matrix-20261016-172837",
+    "model": "local",
+    "variant": "no-apply-patch",
+    "disabled_actions": [
+     "apply_patch"
+    ],
+    "results": [
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-172837-001-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 8,
+      "tool_calls": 7,
+      "elapsed_seconds": 62.48,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-172837-001-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "evaluator repair extension exhausted; remaining checks: count_updates, keeps_all_cards, labeled_fields, runs_without_errors, semantic_structure, submit_adds_card",
+      "first_pass_passed": false,
+      "repair_outcome": "budget_exhausted",
+      "model_calls": 24,
+      "tool_calls": 23,
+      "elapsed_seconds": 277.84,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "count_updates",
+       "keeps_all_cards",
+       "labeled_fields",
+       "runs_without_errors",
+       "semantic_structure",
+       "submit_adds_card"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "001-static-page.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-172837-001-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 102.81,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-172837-002-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": false,
+      "repair_outcome": "passed",
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 21.66,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-172837-002-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 36.28,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "002-file-roundtrip.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-172837-002-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 42.14,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-172837-003-off",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "evaluator repair extension exhausted; remaining checks: validator_rejects_missing_generated_for, validator_rejects_unnamed_check",
+      "first_pass_passed": false,
+      "repair_outcome": "budget_exhausted",
+      "model_calls": 24,
+      "tool_calls": 21,
+      "elapsed_seconds": 161.28,
+      "extension_turns_used": 6,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-172837-003-standard",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "The task is blocked. The generated health report artifact was validated locally with an exit code of 0, but the external evaluator rejected the project based on specific, unstated failures regarding the 'generated_for' field and check naming. Further inspection of the external validator's requiremen",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 20,
+      "tool_calls": 17,
+      "elapsed_seconds": 251.98,
+      "extension_turns_used": 2,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "003-structured-validation.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-172837-003-deep",
+      "passed": false,
+      "status": "blocked",
+      "failure_cause": "recovery exhausted for duplicate_action after 2 attempts: the model repeated write_file with the same arguments",
+      "first_pass_passed": false,
+      "repair_outcome": "blocked",
+      "model_calls": 21,
+      "tool_calls": 16,
+      "elapsed_seconds": 268.03,
+      "extension_turns_used": 3,
+      "final_finding_ids": [
+       "validator_rejects_missing_generated_for",
+       "validator_rejects_unnamed_check"
+      ],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "off",
+      "run_id": "matrix-20261016-172837-004-off",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 9,
+      "tool_calls": 7,
+      "elapsed_seconds": 36.3,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "standard",
+      "run_id": "matrix-20261016-172837-004-standard",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 10,
+      "tool_calls": 8,
+      "elapsed_seconds": 85.27,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     },
+     {
+      "task": "004-mini-project.md",
+      "reasoning_level": "deep",
+      "run_id": "matrix-20261016-172837-004-deep",
+      "passed": true,
+      "status": "success",
+      "failure_cause": "",
+      "first_pass_passed": true,
+      "repair_outcome": null,
+      "model_calls": 11,
+      "tool_calls": 9,
+      "elapsed_seconds": 69.92,
+      "extension_turns_used": 0,
+      "final_finding_ids": [],
+      "has_record": false
+     }
+    ]
    }
   ]
  }

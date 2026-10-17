@@ -25,7 +25,7 @@ The [public showcase](https://silascroe.github.io/lobotomite-harness/) is the re
 ## What it contains
 
 - agent-lab/harness/ — model-provider integration, tool/action handling, workflow and recovery control, approvals, persistence, review evidence, and workspace leases.
-- agent-lab/ui/ — the local web console (ES modules: views, narration, data source, specimen) and its Python server.
+- agent-lab/ui/ — the local web console, a "flight recorder" for runs (ES modules: derivations, instrument views, pages, data source; no build step) and its Python server.
 - site/showcase/ — sanitized run recordings the public showcase replays.
 - agent-lab/tasks/ and agent-lab/checks/ — built-in task presets and independent evaluators.
 - agent-lab/benchmarks/ — model-matrix runners, reports, and benchmark tests.

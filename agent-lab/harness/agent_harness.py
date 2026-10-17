@@ -1036,7 +1036,9 @@ class AgentHarness:
             self.acquire_workspace_lease()
         except WorkspaceBusyError:
             raise
-        self.run_dir.mkdir(parents=True)
+        # The id was checked unused above; the UI server's output capture may
+        # create this folder for output.log as soon as the first line prints.
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         self.logger.event("workspace_lock_acquired", workspace=self.workspace_lease.public())
         self.project_dir.mkdir(parents=True, exist_ok=True)
         if self.template_dir is not None:
