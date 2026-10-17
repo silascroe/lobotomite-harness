@@ -1,14 +1,16 @@
 # Agent Lab
 
+**[See it live →](https://silascroe.github.io/lobotomite-harness/)** The public site is the real console in read-only mode, replaying recorded runs of a 2B model: experiment results on the Bench page, and every run on a flight-recorder timeline you can replay turn by turn. It works on a phone.
+
 Agent Lab is a local-first workbench for testing how small language models handle bounded project work. The harness—not the model alone—supplies project workspaces, a limited tool catalog, workflow gates, persistence, and independent task evaluators. Local GGUF inference through llama.cpp is the default; an OpenAI-compatible API is an optional experiment using the same harness.
 
 ## Why it exists
 
 It started as a curiosity: how competent can a model small enough to run on an ordinary desktop (an i5-8400 with a GTX 1070) become when the harness around it does the heavy lifting, and what are the pieces of the harnesses behind Codex, Claude Code and the chat apps? It is a learning project and something to show and play with, not a daily-driver coding agent. The output worth having is evidence about what each part of the harness adds to a tiny model, graded by checkers that test whether the result actually works.
 
-## Quick start
+## Run it yourself
 
-On Windows, from the repository root, use two PowerShell windows. The checked-in configuration currently targets local Gemma 4 E2B at 127.0.0.1:8080.
+The live site needs nothing installed. To run models of your own: on Windows, from the repository root, use two PowerShell windows. The checked-in configuration currently targets local Gemma 4 E2B at 127.0.0.1:8080.
 
     # Window 1: start the local model server
     .\scripts\start-gemma4-local.ps1 -ModelSize E2B
@@ -16,11 +18,11 @@ On Windows, from the repository root, use two PowerShell windows. The checked-in
     # Window 2: start the Agent Lab console
     .\scripts\start-agent-lab-ui.ps1
 
-Open [http://127.0.0.1:8787](http://127.0.0.1:8787). Before starting, make sure the selected GGUF model and llama.cpp runtime are present under models/ and runtime/; those large assets are intentionally excluded from Git. Detailed setup, bridges, providers, workspaces, and operator commands are in [the operational guide](agent-lab/README.md).
+Then open `http://127.0.0.1:8787` in a browser on that same machine; the console only answers locally, by design. Before starting, make sure the selected GGUF model and llama.cpp runtime are present under models/ and runtime/; those large assets are intentionally excluded from Git. Detailed setup, bridges, providers, workspaces, and operator commands are in [the operational guide](agent-lab/README.md).
 
-## Browse the interface
+## About the live site
 
-The [public showcase](https://silascroe.github.io/lobotomite-harness/) is the real Agent Lab console in read-only showcase mode, replaying recorded runs exactly as they happened. It has no model connection and cannot reach this computer; every action that would start or change work is switched off. Recordings are exported and sanitized with `scripts/export_showcase.py` and deployed by `.github/workflows/pages.yml`.
+[silascroe.github.io/lobotomite-harness](https://silascroe.github.io/lobotomite-harness/) is the same console code in showcase mode. It replays six recorded runs from the 2026-10-16 batches (graded by the behavioral checkers) and the benchmark results, exactly as they happened. It has no model connection and cannot reach any machine; every action that would start or change work is switched off. Recordings are exported and sanitized with `scripts/export_showcase.py` and deployed by `.github/workflows/pages.yml` on every push to `main` that touches the console or the recordings.
 
 ## What it contains
 
